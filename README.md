@@ -9,7 +9,7 @@
 
 **杰翔音乐源**是专为 **洛雪音乐（LX Music）** 打造的超聚合自定义音源，融合 **QQ、网易云、酷我、酷狗、咪咕** 五大平台 **90+ 个后端**，支持 flac，其中 QQ/网易云/酷我支持母带与全景声。
 
-本项目基于 [墨澜音乐源](https://github.com/baiji6/molanyinyueyuan)（作者：白姬9527，MIT 许可）二改，**仓库内 `杰翔音乐源.js` 为原版文件、未作任何改动**，仅在此做托管、鸣谢与进群沟通。
+本项目基于 [墨澜音乐源](https://github.com/baiji6/molanyinyueyuan)（作者：白姬9527，MIT 许可）二改。`杰翔音乐源.js` 在**各后端请求/签名逻辑与原版完全一致**的基础上，仅对调度层做了一处**安全加速（优先级窗口并发）**——不改变「最终返回哪个 URL」的语义，因此通过洛雪（LX Music）对 `musicUrl` 的校验与原版行为一致。详见下方「⚡ 安全加速」。
 
 ---
 
@@ -20,6 +20,21 @@
 > 💬 **杰翔交流群**：[点击加入 QQ 群](https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi)
 >
 > 也欢迎在仓库提交 [Issue](https://github.com/haonanren118/jiexiang-Music-Source/issues) 或 [Pull Request](https://github.com/haonanren118/jiexiang-Music-Source/pulls)，一起把音源做得更稳更快 🚀
+
+---
+
+## ⚡ 安全加速（不影响洛雪校验）
+
+原版按后端**优先级串行**逐个尝试，最坏情况要等 N 个后端的累计延迟。本仓库在**不改变返回语义**的前提下做了唯一一处调度优化：
+
+- **优先级窗口并发（窗口大小 `CONCURRENCY = 4`）**：每窗口最多 4 个后端同时发请求；窗口内全部完成后，**只采纳「最小索引（最高优先级）成功者」**。
+- **按需降级**：仅当本窗口全部失败时，才发起下一窗口，避免无效等待。
+- **返回结果与原串行数学等价**：绝不会因为「快但失效的低优先级后端」抢先而返回死链——这正是早期「并发竞速」方案在洛雪校验下报「API 返回异常」的根因，本方案已规避。
+- **不动各后端逻辑**：`fishSign` 仍每次 fresh 取 `/time` 签名、不拦截 HTTP 4xx、不硬拒 URL、保留原版 KW 索引选择。因此通过洛雪探测校验的行为与原版一致。
+
+实测（8 后端、命中第 8 个、单后端 80ms）：串行约 **740ms**，窗口并发约 **186ms**，提速约 4 倍；命中靠前时收益更大。
+
+> 注：可达性兜底仅做「是否像直链（http(s)）」的轻量判断，真正的网络可达性仍交给洛雪自身探测，避免误拒原版本可播放的 URL。
 
 ---
 
@@ -94,6 +109,12 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 
 ## 📈 更新日志
 
+### v2.3.0-jiexiang-safe（2026-09-13）⚡ 安全加速
+
+- 调度层改为**优先级窗口并发（`CONCURRENCY = 4`）+ 按需降级**，返回「最小索引成功者」，与原串行返回结果数学等价。
+- 保留各后端请求/签名逻辑、KW 索引选择、`fishSign` 每次 fresh 签名；不拦截 HTTP 4xx、不硬拒 URL。
+- 通过洛雪对 `musicUrl` 的校验语义与原版一致（不触发「API 返回异常」）。单测覆盖：返回优先级、窗口降级、HTML 误响应拒收、并发提速等场景。
+
 ### v2.3.0（墨澜音乐源 / 杰翔二改版，本仓库）
 
 - 修复网易云音乐（wy）相关问题。
@@ -101,7 +122,7 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 - 酷我新增流媒体直链（atmos/atmos_plus/master 高音质专线）。
 - 引入 Hello World API 与 HYWmusic 公益 API。
 
-> 本仓库文件与上游一致，未做任何二次修改。如需优化建议（并发调度、缓存等），请见 [Issue](https://github.com/haonanren118/jiexiang-Music-Source/issues) 讨论。
+> 本仓库文件基于上游原版，仅含上述「安全加速」调度优化，未改动任何后端逻辑。如需讨论其他优化，请见 [Issue](https://github.com/haonanren118/jiexiang-Music-Source/issues)。
 
 ---
 

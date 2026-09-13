@@ -2039,7 +2039,14 @@ const MG_BACKENDS = [
   { name: '星海咪咕', fetch: getXinghaiMg },
 ]
 
-// ==================== 获取音乐URL（带多后端轮询） ====================
+// ==================== 获取音乐URL（优先级窗口并发，语义与原串行一致） ====================
+
+// 杰翔安全加速：把后端按「优先级窗口」并发请求，但只采纳「最小索引(最高优先级)成功者」。
+// 这样最终返回的 URL 与「串行按优先级逐个尝试」在数学上完全一致（不会让快但失效的低优先级后端抢先），
+// 仅把「逐个等」变成「每窗口并行等」，大幅缩短等待；不改变洛雪对 musicUrl 的校验语义。
+// 纪律：单个后端的 fetch/签名逻辑原样调用 —— 不并发竞速(firstSuccess)、不拦 4xx、不硬拒 URL、不动 KW 索引选择。
+const CONCURRENCY = 4 // 单窗口同时发起的后端数；本窗口全军覆没才降级到下一窗口，避免无效等待
+const isPlayableUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u.trim()) // 仅做「像不像直链」的兜底，不替代洛雪自身的可达性探测
 
 const handleGetMusicUrl = async (source, musicInfo, quality) => {
   const songId = musicInfo.hash ?? musicInfo.songmid ?? musicInfo.id
@@ -2055,35 +2062,54 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
 
   if (!backends) throw new Error('未知音源: ' + source)
 
-  // 酷我音乐：高音质（atmos/atmos_plus/master）走流媒体直链，普通音质走星海等其他后端
+  // 酷我音乐：高音质（atmos/atmos_plus/master）走流媒体直链，普通音质走星海等其他后端（保持原版索引逻辑不变）
   if (source === 'kw') {
     const highQuality = ['atmos', 'atmos_plus', 'master']
     if (highQuality.includes(quality)) {
-      // 高音质只走酷我流媒体（索引0），不做降级
       backends = [backends[0]]
     } else {
-      // 普通音质跳过酷我流媒体（索引0），走星海等其他后端
       backends = backends.filter((_, i) => i !== 0)
     }
   }
 
   const errors = []
+  const B = backends.length
 
-  for (const backend of backends) {
-    try {
-      console.log('[' + source + '] 尝试后端: ' + backend.name + ' ID: ' + songId + ' 音质: ' + quality)
-      const url = await backend.fetch(songId, quality, musicInfo)
+  // 优先级窗口并发：每窗口最多 CONCURRENCY 个后端同时请求；窗口内全部 settle 后，
+  // 取「最小索引且返回可用直链」的后端作为结果（与原串行返回结果一致）。仅当本窗口全失败时降级到下一窗口。
+  for (let start = 0; start < B; start += CONCURRENCY) {
+    const end = Math.min(start + CONCURRENCY, B)
+    const indices = []
+    for (let i = start; i < end; i++) indices.push(i)
+
+    const settled = await Promise.allSettled(
+      indices.map((i) =>
+        backends[i].fetch(songId, quality, musicInfo).then(
+          (url) => ({ i, url: isPlayableUrl(url) ? url : null }),
+          (e) => ({ i, url: null, err: e })
+        )
+      )
+    )
+
+    // 按优先级(窗口内升序)采纳第一个成功者；其余记录失败原因
+    for (const r of settled) {
+      const { i, url, err } = r.value
       if (url) {
-        console.log('[' + source + '] ' + backend.name + ' 成功')
+        console.log('[' + source + '] ' + backends[i].name + ' 成功')
         return url
       }
-    } catch (e) {
-      errors.push(backend.name + ': ' + e.message)
-      console.log('[' + source + '] ' + backend.name + ' 失败: ' + e.message)
+      if (err) {
+        const msg = err && err.message ? err.message : String(err)
+        errors.push(backends[i].name + ': ' + msg)
+        console.log('[' + source + '] ' + backends[i].name + ' 失败: ' + msg)
+      } else {
+        errors.push(backends[i].name + ': 返回非直链')
+        console.log('[' + source + '] ' + backends[i].name + ' 返回非直链')
+      }
     }
   }
 
-  throw new Error('所有后端均失败（共' + backends.length + '个）\n' + errors.join('\n'))
+  throw new Error('所有后端均失败（共' + B + '个）\n' + errors.join('\n'))
 }
 
 // ==================== 注册请求事件 ====================
