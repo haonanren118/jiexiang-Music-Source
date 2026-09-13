@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
   <img src="https://img.shields.io/badge/platform-LX%20Music-orange" alt="platform">
   <img src="https://img.shields.io/badge/JavaScript-ES5+-yellow" alt="js">
-  <img src="https://img.shields.io/badge/optimized-并发竞速-9cf" alt="optimized">
+  <img src="https://img.shields.io/badge/optimized-串行优先%2B诊断-9cf" alt="optimized">
   <img src="https://img.shields.io/github/stars/haonanren118/jiexiang-Music-Source?style=social" alt="stars">
 </p>
 
@@ -29,7 +29,7 @@
 
 | # | 优化项 | 收益 | 说明 |
 |---|--------|------|------|
-| 1 | **后端并发竞速** | ⭐⭐⭐ 秒级→毫秒级 | 原版「串行轮询」逐个尝试，最坏可达数分钟；改为所有后端**同时请求、第一个成功即返回**（`firstSuccess` 竞速，不依赖 `Promise.any`，最大兼容 LX 沙箱）。 |
+| 1 | **调度恢复串行按优先级 + 成功记忆** | ⭐⭐⭐ 与原版一致且更快 | 经实测对比，原版「串行按优先级轮询」在与洛雪校验兼容性上最稳；本版沿用该行为（高优先级可用源优先命中，不会让「快但失效」的源抢先导致校验报 API 异常），并新增 `lastOk` 记忆：把上次成功的后端排到队首，二次播放即时命中，兼顾稳定与速度。 |
 | 2 | **成功后端记忆** | ⭐⭐⭐ 二次播放更快 | 记录每个 `平台\|音质` 上次命中的后端，下次优先排到队首，跳过已证实不可用的源。 |
 | 3 | **fishSign 缓存** | ⭐⭐ 少一次网络往返 | Fish API 签名原本每次播放都请求 `/time`；现缓存 8 秒（签名本就是秒级时间戳），减少延迟。 |
 | 4 | **入口补齐 `rid`/`musicId`** | ⭐⭐ 修复潜在失败 | 原版入口 `songId` 仅取 `hash/songmid/id`，酷我等仅靠 `rid` 标识的歌曲会在入口直接抛错；现已补齐。 |
@@ -40,7 +40,7 @@
 > 后端数量、平台、音质支持与原版完全一致（90+ 后端，五大平台，含母带/全景声）。
 > 说明：原版中 `MUSIC_QUALITY` 用 `JSON.parse` 内联字符串、`cleanUrl` 会截断 query 等可读性/健壮性项，本次为**最小化破坏风险**未改动；如需进一步重构可参看 Issue 讨论。
 
-| 8 | **API 异常加固** | ⭐⭐⭐ 根治「服务停服/返回HTML/格式变更」 | `httpFetch` 现会识别 **HTTP 4xx/5xx**、**整页 HTML 误响应**、**坏 JSON**，并抛出可读原因；调度层新增 `guardUrl` 终极校验，确保交给播放器的一定是合法直链，绝不可能是 HTML/垃圾文本。详见下方「🛡️ 故障排查」。 |
+| 8 | **API 异常加固** | ⭐⭐⭐ 根治「页面当音频播」 | `httpFetch` 识别 **整页 HTML 误响应**、**坏 JSON（响应格式变更）** 并抛出可读原因（**不拦截 4xx**，以免误杀个别以非 2xx 返回有效直链的免费 API）；调度层在采纳结果前内联「HTML 跳过」校验，整页 HTML 绝不当作直链交给播放器。详见下方「🛡️ 故障排查」。 |
 
 ---
 
@@ -58,7 +58,7 @@
 | 后端改了返回结构 | `响应格式变更(JSON解析失败)` | 上游接口变动，需要更新该后端解析逻辑 |
 
 ### 2. 不会再把 HTML 当歌放给你
-调度层 `guardUrl` 会在返回结果交给播放器前做**终极校验**：非 `http(s)` 直链、含 HTML 标签、含空白字符的一律判为无效，自动跳过该后端继续竞速下一个——**杜绝「页面当音频播」的诡异报错**。
+调度层在采纳某个后端的返回结果前，会做**HTML 跳过校验**：若返回的是整页 HTML（停服/反爬/网关错误页），直接跳过该后端、继续尝试下一个——**杜绝「页面当音频播」的诡异报错**，行为比原版更稳。
 
 ### 3. 全部后端都挂了怎么办
 若最终报 `所有后端均失败（共 N 个）`，错误体下方会附**逐后端失败原因**与排查提示。此时：
@@ -145,14 +145,14 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 
 基于墨澜音乐源 v2.3.0 二改，应用上述 7 项优化：
 
-- 后端调度由串行轮询改为**并发竞速**（首个成功即返回）。
+- 后端调度恢复为**串行按优先级轮询**（行为与原版一致，避免并发竞速让快但失效的后端抢先导致洛雪校验报 API 异常）+ `lastOk` 成功后端记忆（二次播放优先命中）。
 - 新增成功后端记忆，二次播放优先命中。
 - `fishSign` 缓存 8 秒，减少网络往返。
 - 歌曲 ID 入口补齐 `rid`/`musicId`。
 - 酷我高音质改用 `streamOnly` 标记，解除数组索引耦合。
 - 新增 `DEBUG` 日志开关（默认关闭）。
 - 清理冗余 Promise 包装。
-- 🛡️ `httpFetch` 加固：识别 HTTP 4xx/5xx、整页 HTML、坏 JSON 并抛可读原因；新增 `guardUrl` 终极直链校验，根治「API 返回异常（服务停服/返回 HTML/响应格式变更）」。
+- 🛡️ `httpFetch` 加固：识别整页 HTML、坏 JSON（响应格式变更）并抛可读原因（不拦截 4xx，避免误杀以非 2xx 返回有效直链的免费 API）；调度层内联 HTML 跳过校验，根治把整页 HTML 当直链交给播放器。
 
 ### 原版 v2.3.0（墨澜音乐源）
 

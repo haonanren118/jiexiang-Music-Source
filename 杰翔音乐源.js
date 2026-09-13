@@ -10,8 +10,8 @@
  * @changelog
     1.修复wy音源
     2.新增QQ越权
-    3.杰翔优化：后端并发竞速、成功后端记忆、fishSign缓存、入口补rid/musicId、KW高音质标记化、DEBUG日志开关
-    4.杰翔优化：加固 httpFetch（识别 HTTP 4xx/5xx、返回HTML、JSON解析失败并给出可读原因）+ guardUrl 终极直链校验，根治「API返回异常(服务停服/返回HTML/响应格式变更)」
+    3.杰翔优化：后端调度恢复为串行按优先级轮询(行为与原版一致，避免并发竞速让快但失效的后端抢先导致洛雪校验报API异常)+成功后端记忆(lastOk优先)、fishSign缓存、入口补rid/musicId、KW高音质标记化、DEBUG日志开关
+    4.杰翔优化：加固 httpFetch(识别整页HTML、JSON解析失败并给出可读原因，不拦截4xx以免误杀可用后端)+调度层内联HTML跳过，根治把整页HTML当直链交给播放器
  */
 
 
@@ -63,32 +63,26 @@ const MUSIC_SOURCE = Object.keys(MUSIC_QUALITY)
 // 判断响应体是否为 HTML / XML（免费 API 停服时常返回 nginx/cloudflare/404 整页）
 const isHtml = (s) => typeof s === 'string' && /^\s*(<!doctype\s+html|<html|<head|<body|<\?xml)/i.test(s)
 
-// 杰翔优化：增强 httpFetch，对「服务停服/返回HTML/响应格式变更」给出可读错误并快速跳过
+// 杰翔优化：增强 httpFetch，对「返回HTML / 响应格式变更」给出可读错误（注意：不拦截 4xx，
+// 因为个别免费 API 会以非 2xx 状态码返回有效直链，拦截会误杀可用后端，故保持与原版一致的放行行为）
 const httpFetch = (url, options = { method: 'GET' }) => new Promise((resolve, reject) => {
   request(url, options, (err, resp) => {
     if (err) return reject(err)
-    const statusCode = resp.statusCode || 0
     let body = resp.body
 
-    // 1) HTTP 错误状态码：4xx/5xx 直接判为服务异常（停服/限流/网关错误），迅速跳过该后端
-    if (statusCode >= 400) {
-      const snippet = typeof body === 'string' ? body.slice(0, 100).replace(/\s+/g, ' ') : ''
-      return reject(new Error('HTTP ' + statusCode + (isHtml(snippet) ? '(返回HTML/网关错误)' : '') + (snippet ? ' | ' + snippet : '')))
-    }
-
     if (typeof body === 'string') {
-      // 2) HTML 误响应：免费 API 停服 / 触发反爬时常返回整页 HTML，绝不能当作直链
+      // 整页 HTML 误响应：免费 API 停服 / 触发反爬时常返回整页 HTML，绝不可能作为直链，直接判失败并给出可读原因
       if (isHtml(body)) {
         return reject(new Error('返回HTML(服务可能已停服或触发反爬) | ' + body.slice(0, 100).replace(/\s+/g, ' ')))
       }
       const trimmed = body.trim()
-      // 3) 形如 JSON 但解析失败 -> 响应格式变更 / 上游损坏
+      // 形如 JSON 但解析失败 -> 响应格式变更 / 上游损坏（这种一定不是可用直链，安全报错）
       if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) {
         try { body = JSON.parse(trimmed) }
         catch (e) { return reject(new Error('响应格式变更(JSON解析失败) | ' + trimmed.slice(0, 100))) }
       }
     }
-    resolve({ body, statusCode, headers: resp.headers || {} })
+    resolve({ body, statusCode: resp.statusCode, headers: resp.headers || {} })
   })
 })
 
@@ -141,16 +135,6 @@ const cleanUrl = (url) => {
   const s = String(url).replace(/\\?u0026/gi, '&').replace(/\\&/g, '&').replace(/\$/g, '&')
   const idx = s.indexOf('?')
   return idx > 0 ? s.substring(0, idx) : s
-}
-
-// 杰翔优化：终极校验，确保交给播放器的一定是可用直链，绝不可能是 HTML / 垃圾文本 / 含空白的串
-const guardUrl = (url) => {
-  if (typeof url !== 'string' || !url.trim()) return ''
-  const u = url.trim()
-  if (!/^https?:\/\//i.test(u)) return ''   // 非 http(s) 直链一律视为无效
-  if (isHtml(u)) return ''                  // 极端情况下返回的是 HTML 片段
-  if (/\s/.test(u)) return ''               // 含空白不可能是合法直链
-  return u
 }
 
 // ==================== 通用音质转Level工具 ====================
@@ -2077,22 +2061,11 @@ const MG_BACKENDS = [
   { name: '星海咪咕', fetch: getXinghaiMg },
 ]
 
-// ==================== 并发竞速调度（杰翔优化：取代原串行轮询） ====================
+// ==================== 串行按优先级轮询调度（行为与原版一致，确保高优先级可用后端优先命中；
+//                      避免并发竞速让「响应快但失效」的后端抢先胜出，导致洛雪校验报「API 返回异常」） ====================
 
-const DEBUG = false // 设为 true 可在控制台查看后端竞速日志（默认关闭，避免刷屏/泄露听歌记录）
-const lastOk = {}   // 记录每个 source|quality 上次成功的后端名，下次优先，加速命中
-
-// 不依赖 Promise.any，最大兼容 LX 沙箱：任一任务成功即 resolve，全部失败才 reject
-const firstSuccess = (tasks) => new Promise((resolve, reject) => {
-  let remaining = tasks.length
-  if (remaining === 0) return reject(new Error('无可用后端任务'))
-  tasks.forEach((task) => {
-    Promise.resolve().then(task).then(resolve, (e) => {
-      remaining--
-      if (remaining === 0) reject(e)
-    })
-  })
-})
+const DEBUG = false // 设为 true 可在控制台查看后端轮询日志（默认关闭，避免刷屏/泄露听歌记录）
+const lastOk = {}   // 记录每个 source|quality 上次成功的后端名，下次优先排到队首，加速命中
 
 const handleGetMusicUrl = async (source, musicInfo, quality) => {
   // 优化：补齐 rid / musicId，避免酷我等仅靠 rid 标识的歌曲在入口即失败
@@ -2119,7 +2092,7 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
 
   if (!backends.length) throw new Error('无可用后端: ' + source + ' ' + quality)
 
-  // 将上次成功的后端排到最前，提升命中速度
+  // 将上次成功的后端排到最前，提升命中速度（本次若失效会在轮询中快速跳过，不影响正确性）
   const cacheKey = source + '|' + quality
   const ordered = backends.slice().sort((a, b) =>
     (lastOk[cacheKey] === b.name ? 1 : 0) - (lastOk[cacheKey] === a.name ? 1 : 0))
@@ -2127,27 +2100,31 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
   const errors = []
   const log = (m) => { if (DEBUG) console.log(m) }
 
-  // 并发竞速：所有后端同时请求，第一个成功即返回（原串行最坏可达数分钟）
-  try {
-    return await firstSuccess(ordered.map((backend) => async () => {
-      try {
-        log('[' + source + '] 尝试后端: ' + backend.name + ' ID: ' + songId + ' 音质: ' + quality)
-        const raw = await backend.fetch(songId, quality, musicInfo)
-        const url = guardUrl(raw)
-        if (!url) throw new Error('空结果或返回非直链' + (typeof raw === 'string' && raw ? ' | ' + raw.slice(0, 60).replace(/\s+/g, ' ') : ''))
-        lastOk[cacheKey] = backend.name
-        log('[' + source + '] ' + backend.name + ' 成功')
-        return url
-      } catch (e) {
-        errors.push(backend.name + ': ' + (e && e.message ? e.message : e))
-        throw e
+  // 串行按优先级轮询：与原版一致，第一个返回可用直链的后端即采用（高优先级可用源优先，
+  // 不会让「快但失效」的源抢先）。整页 HTML 误响应在此直接跳过，绝不交给播放器。
+  for (const backend of ordered) {
+    try {
+      log('[' + source + '] 尝试后端: ' + backend.name + ' ID: ' + songId + ' 音质: ' + quality)
+      const raw = await backend.fetch(songId, quality, musicInfo)
+      if (!raw) { errors.push(backend.name + ': 空结果'); log('[' + source + '] ' + backend.name + ' 空结果'); continue }
+      // 终极校验：整页 HTML 绝不当作直链交给播放器，跳过该后端继续尝试
+      if (typeof raw === 'string' && isHtml(raw)) {
+        errors.push(backend.name + ': 返回HTML(服务可能已停服或触发反爬)')
+        log('[' + source + '] ' + backend.name + ' 返回HTML')
+        continue
       }
-    }))
-  } catch (e) {
-    throw new Error('所有后端均失败（共' + backends.length + '个）\n' + errors.join('\n') +
-      '\n\n排查提示：多为第三方免费API停服/限流/返回HTML或响应格式变更所致。' +
-      '可依据上方逐后端原因定位失效源，欢迎进群反馈，或等待上游恢复。')
+      lastOk[cacheKey] = backend.name
+      log('[' + source + '] ' + backend.name + ' 成功')
+      return raw
+    } catch (e) {
+      errors.push(backend.name + ': ' + (e && e.message ? e.message : e))
+      log('[' + source + '] ' + backend.name + ' 失败: ' + (e && e.message ? e.message : e))
+    }
   }
+
+  throw new Error('所有后端均失败（共' + backends.length + '个）\n' + errors.join('\n') +
+    '\n\n排查提示：多为第三方免费API停服/限流/返回HTML或响应格式变更所致。' +
+    '可依据上方逐后端原因定位失效源，欢迎进群反馈，或等待上游恢复。')
 }
 
 // ==================== 注册请求事件 ====================
