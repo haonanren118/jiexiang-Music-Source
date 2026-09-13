@@ -11,6 +11,7 @@
     1.修复wy音源
     2.新增QQ越权
     3.杰翔优化：后端并发竞速、成功后端记忆、fishSign缓存、入口补rid/musicId、KW高音质标记化、DEBUG日志开关
+    4.杰翔优化：加固 httpFetch（识别 HTTP 4xx/5xx、返回HTML、JSON解析失败并给出可读原因）+ guardUrl 终极直链校验，根治「API返回异常(服务停服/返回HTML/响应格式变更)」
  */
 
 
@@ -59,17 +60,35 @@ const MUSIC_SOURCE = Object.keys(MUSIC_QUALITY)
 
 // ==================== 工具函数 ====================
 
+// 判断响应体是否为 HTML / XML（免费 API 停服时常返回 nginx/cloudflare/404 整页）
+const isHtml = (s) => typeof s === 'string' && /^\s*(<!doctype\s+html|<html|<head|<body|<\?xml)/i.test(s)
+
+// 杰翔优化：增强 httpFetch，对「服务停服/返回HTML/响应格式变更」给出可读错误并快速跳过
 const httpFetch = (url, options = { method: 'GET' }) => new Promise((resolve, reject) => {
   request(url, options, (err, resp) => {
     if (err) return reject(err)
+    const statusCode = resp.statusCode || 0
     let body = resp.body
+
+    // 1) HTTP 错误状态码：4xx/5xx 直接判为服务异常（停服/限流/网关错误），迅速跳过该后端
+    if (statusCode >= 400) {
+      const snippet = typeof body === 'string' ? body.slice(0, 100).replace(/\s+/g, ' ') : ''
+      return reject(new Error('HTTP ' + statusCode + (isHtml(snippet) ? '(返回HTML/网关错误)' : '') + (snippet ? ' | ' + snippet : '')))
+    }
+
     if (typeof body === 'string') {
+      // 2) HTML 误响应：免费 API 停服 / 触发反爬时常返回整页 HTML，绝不能当作直链
+      if (isHtml(body)) {
+        return reject(new Error('返回HTML(服务可能已停服或触发反爬) | ' + body.slice(0, 100).replace(/\s+/g, ' ')))
+      }
       const trimmed = body.trim()
+      // 3) 形如 JSON 但解析失败 -> 响应格式变更 / 上游损坏
       if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) {
-        try { body = JSON.parse(trimmed) } catch (e) {}
+        try { body = JSON.parse(trimmed) }
+        catch (e) { return reject(new Error('响应格式变更(JSON解析失败) | ' + trimmed.slice(0, 100))) }
       }
     }
-    resolve({ body, statusCode: resp.statusCode, headers: resp.headers || {} })
+    resolve({ body, statusCode, headers: resp.headers || {} })
   })
 })
 
@@ -122,6 +141,16 @@ const cleanUrl = (url) => {
   const s = String(url).replace(/\\?u0026/gi, '&').replace(/\\&/g, '&').replace(/\$/g, '&')
   const idx = s.indexOf('?')
   return idx > 0 ? s.substring(0, idx) : s
+}
+
+// 杰翔优化：终极校验，确保交给播放器的一定是可用直链，绝不可能是 HTML / 垃圾文本 / 含空白的串
+const guardUrl = (url) => {
+  if (typeof url !== 'string' || !url.trim()) return ''
+  const u = url.trim()
+  if (!/^https?:\/\//i.test(u)) return ''   // 非 http(s) 直链一律视为无效
+  if (isHtml(u)) return ''                  // 极端情况下返回的是 HTML 片段
+  if (/\s/.test(u)) return ''               // 含空白不可能是合法直链
+  return u
 }
 
 // ==================== 通用音质转Level工具 ====================
@@ -2103,8 +2132,9 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
     return await firstSuccess(ordered.map((backend) => async () => {
       try {
         log('[' + source + '] 尝试后端: ' + backend.name + ' ID: ' + songId + ' 音质: ' + quality)
-        const url = await backend.fetch(songId, quality, musicInfo)
-        if (!url) throw new Error('空结果')
+        const raw = await backend.fetch(songId, quality, musicInfo)
+        const url = guardUrl(raw)
+        if (!url) throw new Error('空结果或返回非直链' + (typeof raw === 'string' && raw ? ' | ' + raw.slice(0, 60).replace(/\s+/g, ' ') : ''))
         lastOk[cacheKey] = backend.name
         log('[' + source + '] ' + backend.name + ' 成功')
         return url
@@ -2114,7 +2144,9 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
       }
     }))
   } catch (e) {
-    throw new Error('所有后端均失败（共' + backends.length + '个）\n' + errors.join('\n'))
+    throw new Error('所有后端均失败（共' + backends.length + '个）\n' + errors.join('\n') +
+      '\n\n排查提示：多为第三方免费API停服/限流/返回HTML或响应格式变更所致。' +
+      '可依据上方逐后端原因定位失效源，欢迎进群反馈，或等待上游恢复。')
   }
 }
 
