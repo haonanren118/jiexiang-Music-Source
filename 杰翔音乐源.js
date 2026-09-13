@@ -1,17 +1,14 @@
 /*!
- * @name 杰翔聚合音源 (jiexiang-Music Source)
- * @description 全平台支持flac，wy，qq，kw，kg支持母带（杰翔优化版：后端并发竞速）
- * @version 2.3.0-jiexiang
- * @author 杰翔（交流群：https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi）
- * @homepage https://github.com/haonanren118/jiexiang-Music-Source
- * @based_on 墨澜音乐源 https://github.com/baiji6/molanyinyueyuan （原作者：白姬9527）
+ * @name 杰翔聚合音源
+ * @description 全平台支持flac，wy，qq，kw，kg支持母带
+ * @version 2.3.0
+ * @author https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi
+ * @homepage https://github.com/baiji6/molanyinyueyuan
  * @license MIT
  * @update 2026-09-13
  * @changelog
     1.修复wy音源
     2.新增QQ越权
-    3.杰翔优化：后端调度恢复为串行按优先级轮询(行为与原版一致，避免并发竞速让快但失效的后端抢先导致洛雪校验报API异常)+成功后端记忆(lastOk优先)、fishSign缓存、入口补rid/musicId、KW高音质标记化、DEBUG日志开关
-    4.杰翔优化：加固 httpFetch(识别整页HTML、JSON解析失败并给出可读原因，不拦截4xx以免误杀可用后端)+调度层内联HTML跳过，根治把整页HTML当直链交给播放器
  */
 
 
@@ -60,26 +57,14 @@ const MUSIC_SOURCE = Object.keys(MUSIC_QUALITY)
 
 // ==================== 工具函数 ====================
 
-// 判断响应体是否为 HTML / XML（免费 API 停服时常返回 nginx/cloudflare/404 整页）
-const isHtml = (s) => typeof s === 'string' && /^\s*(<!doctype\s+html|<html|<head|<body|<\?xml)/i.test(s)
-
-// 杰翔优化：增强 httpFetch，对「返回HTML / 响应格式变更」给出可读错误（注意：不拦截 4xx，
-// 因为个别免费 API 会以非 2xx 状态码返回有效直链，拦截会误杀可用后端，故保持与原版一致的放行行为）
 const httpFetch = (url, options = { method: 'GET' }) => new Promise((resolve, reject) => {
   request(url, options, (err, resp) => {
     if (err) return reject(err)
     let body = resp.body
-
     if (typeof body === 'string') {
-      // 整页 HTML 误响应：免费 API 停服 / 触发反爬时常返回整页 HTML，绝不可能作为直链，直接判失败并给出可读原因
-      if (isHtml(body)) {
-        return reject(new Error('返回HTML(服务可能已停服或触发反爬) | ' + body.slice(0, 100).replace(/\s+/g, ' ')))
-      }
       const trimmed = body.trim()
-      // 形如 JSON 但解析失败 -> 响应格式变更 / 上游损坏（这种一定不是可用直链，安全报错）
       if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) {
-        try { body = JSON.parse(trimmed) }
-        catch (e) { return reject(new Error('响应格式变更(JSON解析失败) | ' + trimmed.slice(0, 100))) }
+        try { body = JSON.parse(trimmed) } catch (e) {}
       }
     }
     resolve({ body, statusCode: resp.statusCode, headers: resp.headers || {} })
@@ -342,17 +327,11 @@ const KW_STREAM_LEVEL_MAP = {
 const FISH_DOMAIN = 'music.gdstudio.xyz'
 const FISH_VERSION = '20260510'
 
-// 优化：签名有效期约 9 位秒级时间戳，缓存 8 秒避免每次播放都请求 /time
-let _fishTime = 0
-let _fishSignCache = ''
 const fishSign = async (secret) => {
-  const now = Date.now()
-  if (now - _fishTime < 8000 && _fishSignCache) return _fishSignCache
   const timeRes = await httpFetch('https://' + FISH_DOMAIN + '/time', { method: 'GET', timeout: 10000 })
-  const timeStr = String(Number(timeRes.body) || now).slice(0, 9)
+  const timeStr = String(Number(timeRes.body) || Date.now()).slice(0, 9)
   const signInput = FISH_DOMAIN + '|' + FISH_VERSION + '|' + timeStr + '|' + secret
-  _fishTime = now
-  return _fishSignCache = md5(signInput).slice(-8).toUpperCase()
+  return md5(signInput).slice(-8).toUpperCase()
 }
 
 const fishPost = async (params, secret) => {
@@ -1326,7 +1305,6 @@ const KW_BACKENDS = [
   // 注：该服务器atmos/atmos_plus/master返回200，其他音质返回400，但URL本身即为可播放地址，无需验证
   {
     name: '酷我流媒体',
-    streamOnly: true, // 仅用于 kw 高音质（atmos/atmos_plus/master），由优化后的调度逻辑识别，避免依赖数组索引
     fetch: async (songmid, quality, musicInfo) => {
       const level = KW_STREAM_LEVEL_MAP[quality] || 'master'
       const songIdTmp = musicInfo?.songmid || musicInfo?.id || musicInfo?.hash || musicInfo?.songId || musicInfo?.musicId || songmid
@@ -2061,15 +2039,10 @@ const MG_BACKENDS = [
   { name: '星海咪咕', fetch: getXinghaiMg },
 ]
 
-// ==================== 串行按优先级轮询调度（行为与原版一致，确保高优先级可用后端优先命中；
-//                      避免并发竞速让「响应快但失效」的后端抢先胜出，导致洛雪校验报「API 返回异常」） ====================
-
-const DEBUG = false // 设为 true 可在控制台查看后端轮询日志（默认关闭，避免刷屏/泄露听歌记录）
-const lastOk = {}   // 记录每个 source|quality 上次成功的后端名，下次优先排到队首，加速命中
+// ==================== 获取音乐URL（带多后端轮询） ====================
 
 const handleGetMusicUrl = async (source, musicInfo, quality) => {
-  // 优化：补齐 rid / musicId，避免酷我等仅靠 rid 标识的歌曲在入口即失败
-  const songId = musicInfo.hash ?? musicInfo.songmid ?? musicInfo.id ?? musicInfo.rid ?? musicInfo.musicId
+  const songId = musicInfo.hash ?? musicInfo.songmid ?? musicInfo.id
   if (!songId) throw new Error('无法获取歌曲ID')
 
   let backends = {
@@ -2082,49 +2055,35 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
 
   if (!backends) throw new Error('未知音源: ' + source)
 
-  // 酷我音乐：高音质（atmos/atmos_plus/master）仅走流媒体直链（标记 streamOnly），普通音质跳过它
+  // 酷我音乐：高音质（atmos/atmos_plus/master）走流媒体直链，普通音质走星海等其他后端
   if (source === 'kw') {
     const highQuality = ['atmos', 'atmos_plus', 'master']
-    backends = highQuality.includes(quality)
-      ? backends.filter((b) => b.streamOnly)
-      : backends.filter((b) => !b.streamOnly)
-  }
-
-  if (!backends.length) throw new Error('无可用后端: ' + source + ' ' + quality)
-
-  // 将上次成功的后端排到最前，提升命中速度（本次若失效会在轮询中快速跳过，不影响正确性）
-  const cacheKey = source + '|' + quality
-  const ordered = backends.slice().sort((a, b) =>
-    (lastOk[cacheKey] === b.name ? 1 : 0) - (lastOk[cacheKey] === a.name ? 1 : 0))
-
-  const errors = []
-  const log = (m) => { if (DEBUG) console.log(m) }
-
-  // 串行按优先级轮询：与原版一致，第一个返回可用直链的后端即采用（高优先级可用源优先，
-  // 不会让「快但失效」的源抢先）。整页 HTML 误响应在此直接跳过，绝不交给播放器。
-  for (const backend of ordered) {
-    try {
-      log('[' + source + '] 尝试后端: ' + backend.name + ' ID: ' + songId + ' 音质: ' + quality)
-      const raw = await backend.fetch(songId, quality, musicInfo)
-      if (!raw) { errors.push(backend.name + ': 空结果'); log('[' + source + '] ' + backend.name + ' 空结果'); continue }
-      // 终极校验：整页 HTML 绝不当作直链交给播放器，跳过该后端继续尝试
-      if (typeof raw === 'string' && isHtml(raw)) {
-        errors.push(backend.name + ': 返回HTML(服务可能已停服或触发反爬)')
-        log('[' + source + '] ' + backend.name + ' 返回HTML')
-        continue
-      }
-      lastOk[cacheKey] = backend.name
-      log('[' + source + '] ' + backend.name + ' 成功')
-      return raw
-    } catch (e) {
-      errors.push(backend.name + ': ' + (e && e.message ? e.message : e))
-      log('[' + source + '] ' + backend.name + ' 失败: ' + (e && e.message ? e.message : e))
+    if (highQuality.includes(quality)) {
+      // 高音质只走酷我流媒体（索引0），不做降级
+      backends = [backends[0]]
+    } else {
+      // 普通音质跳过酷我流媒体（索引0），走星海等其他后端
+      backends = backends.filter((_, i) => i !== 0)
     }
   }
 
-  throw new Error('所有后端均失败（共' + backends.length + '个）\n' + errors.join('\n') +
-    '\n\n排查提示：多为第三方免费API停服/限流/返回HTML或响应格式变更所致。' +
-    '可依据上方逐后端原因定位失效源，欢迎进群反馈，或等待上游恢复。')
+  const errors = []
+
+  for (const backend of backends) {
+    try {
+      console.log('[' + source + '] 尝试后端: ' + backend.name + ' ID: ' + songId + ' 音质: ' + quality)
+      const url = await backend.fetch(songId, quality, musicInfo)
+      if (url) {
+        console.log('[' + source + '] ' + backend.name + ' 成功')
+        return url
+      }
+    } catch (e) {
+      errors.push(backend.name + ': ' + e.message)
+      console.log('[' + source + '] ' + backend.name + ' 失败: ' + e.message)
+    }
+  }
+
+  throw new Error('所有后端均失败（共' + backends.length + '个）\n' + errors.join('\n'))
 }
 
 // ==================== 注册请求事件 ====================
@@ -2133,6 +2092,8 @@ on(EVENT_NAMES.request, ({ action, source, info }) => {
   switch (action) {
     case 'musicUrl':
       return handleGetMusicUrl(source, info.musicInfo, info.type)
+        .then((data) => Promise.resolve(data))
+        .catch((err) => Promise.reject(err))
     default:
       return Promise.reject('action not support: ' + action)
   }

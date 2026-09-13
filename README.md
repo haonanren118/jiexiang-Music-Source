@@ -1,17 +1,15 @@
 # 🎵 杰翔音乐源 (jiexiang-Music Source)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.3.0--jiexiang-brightgreen" alt="version">
+  <img src="https://img.shields.io/badge/version-2.3.0-brightgreen" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
   <img src="https://img.shields.io/badge/platform-LX%20Music-orange" alt="platform">
-  <img src="https://img.shields.io/badge/JavaScript-ES5+-yellow" alt="js">
-  <img src="https://img.shields.io/badge/optimized-串行优先%2B诊断-9cf" alt="optimized">
   <img src="https://img.shields.io/github/stars/haonanren118/jiexiang-Music-Source?style=social" alt="stars">
 </p>
 
-杰翔音乐源是专为 **洛雪音乐（LX Music）** 打造的超聚合自定义音源，融合 **QQ、网易云、酷我、酷狗、咪咕** 五大平台 **90+ 个后端**。
+**杰翔音乐源**是专为 **洛雪音乐（LX Music）** 打造的超聚合自定义音源，融合 **QQ、网易云、酷我、酷狗、咪咕** 五大平台 **90+ 个后端**，支持 flac，其中 QQ/网易云/酷我支持母带与全景声。
 
-本项目基于 [墨澜音乐源](https://github.com/baiji6/molanyinyueyuan)（作者：白姬9527）二改，在保留全部后端的基础上，对调度引擎做了性能与健壮性优化（见下文「⚡ 优化亮点」）。
+本项目基于 [墨澜音乐源](https://github.com/baiji6/molanyinyueyuan)（作者：白姬9527，MIT 许可）二改，**仓库内 `杰翔音乐源.js` 为原版文件、未作任何改动**，仅在此做托管、鸣谢与进群沟通。
 
 ---
 
@@ -22,51 +20,6 @@
 > 💬 **杰翔交流群**：[点击加入 QQ 群](https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi)
 >
 > 也欢迎在仓库提交 [Issue](https://github.com/haonanren118/jiexiang-Music-Source/issues) 或 [Pull Request](https://github.com/haonanren118/jiexiang-Music-Source/pulls)，一起把音源做得更稳更快 🚀
-
----
-
-## ⚡ 优化亮点（相对原版墨澜音乐源）
-
-| # | 优化项 | 收益 | 说明 |
-|---|--------|------|------|
-| 1 | **调度恢复串行按优先级 + 成功记忆** | ⭐⭐⭐ 与原版一致且更快 | 经实测对比，原版「串行按优先级轮询」在与洛雪校验兼容性上最稳；本版沿用该行为（高优先级可用源优先命中，不会让「快但失效」的源抢先导致校验报 API 异常），并新增 `lastOk` 记忆：把上次成功的后端排到队首，二次播放即时命中，兼顾稳定与速度。 |
-| 2 | **成功后端记忆** | ⭐⭐⭐ 二次播放更快 | 记录每个 `平台\|音质` 上次命中的后端，下次优先排到队首，跳过已证实不可用的源。 |
-| 3 | **fishSign 缓存** | ⭐⭐ 少一次网络往返 | Fish API 签名原本每次播放都请求 `/time`；现缓存 8 秒（签名本就是秒级时间戳），减少延迟。 |
-| 4 | **入口补齐 `rid`/`musicId`** | ⭐⭐ 修复潜在失败 | 原版入口 `songId` 仅取 `hash/songmid/id`，酷我等仅靠 `rid` 标识的歌曲会在入口直接抛错；现已补齐。 |
-| 5 | **KW 高音质标记化** | ⭐⭐ 消除索引耦合隐患 | 原版靠「数组索引 0」判断酷我流媒体直链，插入后端即错位；现用 `streamOnly` 标记识别，顺序无关。 |
-| 6 | **DEBUG 日志开关** | ⭐ 不刷屏/不泄露 | 后端竞速日志默认关闭（`DEBUG = false`），需要时置 `true` 才会打印，避免在控制台暴露听歌记录。 |
-| 7 | **去除冗余 Promise 包装** | ⭐ 代码更干净 | 注册事件里的 `.then(Promise.resolve).catch(Promise.reject)` 冗余包装已移除。 |
-
-> 后端数量、平台、音质支持与原版完全一致（90+ 后端，五大平台，含母带/全景声）。
-> 说明：原版中 `MUSIC_QUALITY` 用 `JSON.parse` 内联字符串、`cleanUrl` 会截断 query 等可读性/健壮性项，本次为**最小化破坏风险**未改动；如需进一步重构可参看 Issue 讨论。
-
-| 8 | **API 异常加固** | ⭐⭐⭐ 根治「页面当音频播」 | `httpFetch` 识别 **整页 HTML 误响应**、**坏 JSON（响应格式变更）** 并抛出可读原因（**不拦截 4xx**，以免误杀个别以非 2xx 返回有效直链的免费 API）；调度层在采纳结果前内联「HTML 跳过」校验，整页 HTML 绝不当作直链交给播放器。详见下方「🛡️ 故障排查」。 |
-
----
-
-## 🛡️ 故障排查 · 第三方 API 异常
-
-本项目依赖 **90+ 个第三方免费 API**，它们随时可能因为**停服、限流、反爬、改版**而返回异常。针对你很可能遇到的 **「API 返回异常（可能服务已停服、返回 HTML 或响应格式变更）」**，本优化版已做如下兜底：
-
-### 1. 三类异常现在都有可读原因
-失败时在洛雪控制台 / 音源错误里会看到明确标注，便于定位是哪个后端挂了：
-
-| 现象 | 新错误提示 | 含义 |
-|------|-----------|------|
-| 后端返回 `502/404/403` 等 | `HTTP 502(返回HTML/网关错误)` | 服务停服 / 触发网关或反爬 |
-| 后端返回整页 HTML | `返回HTML(服务可能已停服或触发反爬)` | 站点维护中、被墙、Cloudflare 拦截 |
-| 后端改了返回结构 | `响应格式变更(JSON解析失败)` | 上游接口变动，需要更新该后端解析逻辑 |
-
-### 2. 不会再把 HTML 当歌放给你
-调度层在采纳某个后端的返回结果前，会做**HTML 跳过校验**：若返回的是整页 HTML（停服/反爬/网关错误页），直接跳过该后端、继续尝试下一个——**杜绝「页面当音频播」的诡异报错**，行为比原版更稳。
-
-### 3. 全部后端都挂了怎么办
-若最终报 `所有后端均失败（共 N 个）`，错误体下方会附**逐后端失败原因**与排查提示。此时：
-
-- ✅ **先看是不是网络 / 代理问题**：洛雪需要能直连这些国内 API，梯子/防火墙可能误伤。
-- ✅ **看是不是大面积失效**：在 [交流群](#-欢迎进群沟通) 或 [Issue](https://github.com/haonanren118/jiexiang-Music-Source/issues) 反馈，通常上游恢复或换批后端即可。
-- ✅ **高音质失败优先检查 Cookie**：母带 / 全景声依赖会员 Cookie，过期会整体失败（见「🔑 Cookie 配置」）。
-- 🔧 **想自己抓失效源**：把 `杰翔音乐源.js` 顶部 `const DEBUG = false` 改为 `true`，保存后播放即可在控制台看到每个后端的竞速日志与具体原因。
 
 ---
 
@@ -141,25 +94,20 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 
 ## 📈 更新日志
 
-### v2.3.0-jiexiang（2026-09-13）⚡ 优化版
-
-基于墨澜音乐源 v2.3.0 二改，应用上述 7 项优化：
-
-- 后端调度恢复为**串行按优先级轮询**（行为与原版一致，避免并发竞速让快但失效的后端抢先导致洛雪校验报 API 异常）+ `lastOk` 成功后端记忆（二次播放优先命中）。
-- 新增成功后端记忆，二次播放优先命中。
-- `fishSign` 缓存 8 秒，减少网络往返。
-- 歌曲 ID 入口补齐 `rid`/`musicId`。
-- 酷我高音质改用 `streamOnly` 标记，解除数组索引耦合。
-- 新增 `DEBUG` 日志开关（默认关闭）。
-- 清理冗余 Promise 包装。
-- 🛡️ `httpFetch` 加固：识别整页 HTML、坏 JSON（响应格式变更）并抛可读原因（不拦截 4xx，避免误杀以非 2xx 返回有效直链的免费 API）；调度层内联 HTML 跳过校验，根治把整页 HTML 当直链交给播放器。
-
-### 原版 v2.3.0（墨澜音乐源）
+### v2.3.0（墨澜音乐源 / 杰翔二改版，本仓库）
 
 - 修复网易云音乐（wy）相关问题。
 - 新增星澜聚合后端：QQ越权（3 重策略）、ygking QQ、残像 WY（母带）、星海聚合、yunmge 酷我、念心酷狗。
 - 酷我新增流媒体直链（atmos/atmos_plus/master 高音质专线）。
 - 引入 Hello World API 与 HYWmusic 公益 API。
+
+> 本仓库文件与上游一致，未做任何二次修改。如需优化建议（并发调度、缓存等），请见 [Issue](https://github.com/haonanren118/jiexiang-Music-Source/issues) 讨论。
+
+---
+
+## 📜 关于 LICENSE
+
+本项目以 **MIT 许可证** 发布，基于墨澜音乐源二改，已保留原作者版权声明（见 `LICENSE`）。你可以自由使用、修改、分发，但须保留原作者版权与许可声明。
 
 ---
 
@@ -169,7 +117,6 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 
 - 🐞 **报告 Bug**：在 [Issues](https://github.com/haonanren118/jiexiang-Music-Source/issues) 附上洛雪版本、平台、复现步骤、错误日志。
 - 💡 **提新后端**：说明后端 URL、API 文档、支持平台与音质。
-- 🔧 **提交 PR**：Fork → 分支 `feature/xxx` → 保持 ES5 语法兼容 LX 沙箱 → 在对应 `BACKENDS` 数组按优先级插入 → 提 PR。
 - 💬 **进群聊**：见顶部「欢迎进群沟通」。
 
 ---
@@ -202,7 +149,7 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 
 ---
 
-杰翔音乐源 v2.3.0-jiexiang —— 汇聚百川，只为每一首歌流畅抵达。
+杰翔音乐源 v2.3.0 —— 汇聚百川，只为每一首歌流畅抵达。
 如果你喜欢这个项目，别忘了点 ⭐ **Star** 支持我们，并欢迎进群一起交流！🎵
 
 *免责声明：本项目仅用于学习与技术研究，请遵守相关平台服务条款与当地法律法规，勿用于商业或侵权用途。*
