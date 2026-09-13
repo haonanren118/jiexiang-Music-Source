@@ -2075,38 +2075,48 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
   const errors = []
   const B = backends.length
 
-  // 优先级窗口并发：每窗口最多 CONCURRENCY 个后端同时请求；窗口内全部 settle 后，
-  // 取「最小索引且返回可用直链」的后端作为结果（与原串行返回结果一致）。仅当本窗口全失败时降级到下一窗口。
+  // 优先级竞价窗口：每窗口最多 CONCURRENCY 个后端并发请求，但一旦「最高优先级(最小索引)成功者」可确定就立即返回，
+  // 不再等同窗口内排在它后面的慢后端——这正是此前比原版慢的根因（Promise.allSettled 会傻等窗口里最慢的那个）。
+  // 返回结果与「串行按优先级逐个尝试」完全一致：只有 backends[0..i-1] 全失败且 backends[i] 成功才采用 i，不改变洛雪对 musicUrl 的校验语义。
+  const raceWindow = (indices) => new Promise((resolve) => {
+    const outcomes = {} // i -> url(成功) | null(失败/非直链)
+    const decide = () => {
+      for (const i of indices) {
+        if (!(i in outcomes)) return        // 更低优先级的后端还没结果，不能下结论，继续等
+        if (outcomes[i]) {                   // 当前最低优先级已成功 -> 采用它（更高优先级无需再等）
+          console.log('[' + source + '] ' + backends[i].name + ' 成功')
+          resolve(outcomes[i])
+          return
+        }
+        // 当前最低优先级失败 -> 看下一个更高优先级
+      }
+      resolve(null) // 本窗口全部失败
+    }
+    indices.forEach((i) => {
+      backends[i].fetch(songId, quality, musicInfo).then(
+        (url) => {
+          const u = isPlayableUrl(url) ? url : null
+          if (!u) { errors.push(backends[i].name + ': 返回非直链'); console.log('[' + source + '] ' + backends[i].name + ' 返回非直链') }
+          outcomes[i] = u
+          decide()
+        },
+        (e) => {
+          const msg = e && e.message ? e.message : String(e)
+          errors.push(backends[i].name + ': ' + msg)
+          console.log('[' + source + '] ' + backends[i].name + ' 失败: ' + msg)
+          outcomes[i] = null
+          decide()
+        }
+      )
+    })
+  })
+
   for (let start = 0; start < B; start += CONCURRENCY) {
     const end = Math.min(start + CONCURRENCY, B)
     const indices = []
     for (let i = start; i < end; i++) indices.push(i)
-
-    const settled = await Promise.allSettled(
-      indices.map((i) =>
-        backends[i].fetch(songId, quality, musicInfo).then(
-          (url) => ({ i, url: isPlayableUrl(url) ? url : null }),
-          (e) => ({ i, url: null, err: e })
-        )
-      )
-    )
-
-    // 按优先级(窗口内升序)采纳第一个成功者；其余记录失败原因
-    for (const r of settled) {
-      const { i, url, err } = r.value
-      if (url) {
-        console.log('[' + source + '] ' + backends[i].name + ' 成功')
-        return url
-      }
-      if (err) {
-        const msg = err && err.message ? err.message : String(err)
-        errors.push(backends[i].name + ': ' + msg)
-        console.log('[' + source + '] ' + backends[i].name + ' 失败: ' + msg)
-      } else {
-        errors.push(backends[i].name + ': 返回非直链')
-        console.log('[' + source + '] ' + backends[i].name + ' 返回非直链')
-      }
-    }
+    const win = await raceWindow(indices) // 本窗口内有成功则立即返回；全失败才降级下一窗口
+    if (win) return win
   }
 
   throw new Error('所有后端均失败（共' + B + '个）\n' + errors.join('\n'))
