@@ -1,7 +1,7 @@
 # 🎵 杰翔音乐源 (jiexiang-Music Source)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.3.0-brightgreen" alt="version">
+  <img src="https://img.shields.io/badge/version-2.4.0-brightgreen" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
   <img src="https://img.shields.io/badge/platform-LX%20Music-orange" alt="platform">
   <img src="https://img.shields.io/github/stars/haonanren118/jiexiang-Music-Source?style=social" alt="stars">
@@ -10,6 +10,8 @@
 **杰翔音乐源**是专为 **洛雪音乐（LX Music）** 打造的超聚合自定义音源，融合 **QQ、网易云、酷我、酷狗、咪咕** 五大平台 **90+ 个后端**，支持 flac，其中 QQ/网易云/酷我支持母带与全景声。
 
 本项目基于 [墨澜音乐源](https://github.com/baiji6/molanyinyueyuan)（作者：白姬9527，MIT 许可）二改。`杰翔音乐源.js` 在**各后端请求/签名逻辑与原版完全一致**的基础上，仅对调度层做了一处**安全加速（优先级窗口并发）**——不改变「最终返回哪个 URL」的语义，因此通过洛雪（LX Music）对 `musicUrl` 的校验与原版行为一致。详见下方「⚡ 安全加速」。
+
+> 📦 仓库主页（双平台同步）：[GitHub](https://github.com/haonanren118/jiexiang-Music-Source) · [Gitee](https://gitee.com/yygitee118/jiexiang-Music-Source)
 
 ---
 
@@ -53,6 +55,20 @@
 
 ---
 
+## 📌 接入地址（v2.4.0）
+
+**在线导入**（洛雪「自定义源管理 → 在线导入」直接粘贴）：
+
+```
+https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7%BF%94%E9%9F%B3%E4%B9%90%E6%BA%90.js
+```
+
+- 历史版本：`历史版本/杰翔音乐源-2.3.0.js`
+- 说明：kw 仅保留酷我官方手机版/车机版后端
+- 提示：请使用上面这条 **URL 编码后** 的地址。未编码的中文路径在浏览器、curl、Node 下可用，但 Python 及部分脚本会直接报错
+
+---
+
 ## 🔧 安装与使用
 
 ### 📥 快速开始
@@ -65,8 +81,14 @@
 
 ### 📄 获取完整脚本
 
+本项目同时托管于 **GitHub** 与 **Gitee**，二选一下载即可。国内用户推荐 Gitee 源（`raw.githubusercontent.com` 常被墙）：
+
 ```bash
+# 方式一：GitHub 源（国际）
 curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/main/杰翔音乐源.js
+
+# 方式二：Gitee 源（国内加速，推荐）
+curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7%BF%94%E9%9F%B3%E4%B9%90%E6%BA%90.js
 ```
 
 > 注意：确保复制完整，首尾包含 `/*!` 和 `*/` 的注释区域，避免语法错误。
@@ -100,7 +122,7 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 |------|--------|------|
 | QQ音乐 (tx) | 26 | 含 QQ官方、星海、溯音、xcvts、vkeys、柳云、317ak、lxmusic88、HYWmusic 公益、QQ越权、ygking 等 |
 | 网易云音乐 (wy) | 20 | 含 ikun、网易云官方(eapi)、ChKsZ、笒鬼鬼、toubiec、星海、残像(母带) 等 |
-| 酷我音乐 (kw) | 17 | 含酷我流媒体高音质专线、星海、笒鬼鬼、聚合API、酷我官方/手机版/车机版、HelloWorld、yunmge 等 |
+| 酷我音乐 (kw) | 2 | 仅保留酷我官方手机版/车机版（其余第三方后端长期失效，已移除） |
 | 酷狗音乐 (kg) | 18 | 含长青海棠(主API)、长青SVIP、星海、HelloWorld、妖狐、念心、海棠API、酷狗官方 等 |
 | 咪咕音乐 (mg) | 12 | 含星海、聚合API、Migu 直接源/API、长青、念心、聆澜、HYWmusic 等 |
 
@@ -109,6 +131,12 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 ---
 
 ## 📈 更新日志
+
+### v2.4.0（2026-11-19）📌 正式发行
+
+- 版本号升级至 2.4.0，README 新增「接入地址」说明与发行标记。
+- 酷我（kw）后端调整为仅保留官方手机版/车机版，其余长期失效的第三方后端已移除。
+- 上一版本归档至 `历史版本/杰翔音乐源-2.3.0.js`，可随时回滚。
 
 ### v2.3.0-jiexiang-safe（2026-09-13）⚡ 安全加速
 
@@ -172,7 +200,7 @@ curl -O https://raw.githubusercontent.com/haonanren118/jiexiang-Music-Source/mai
 
 ---
 
-杰翔音乐源 v2.3.0 —— 汇聚百川，只为每一首歌流畅抵达。
+杰翔音乐源 v2.4.0 —— 汇聚百川，只为每一首歌流畅抵达。
 如果你喜欢这个项目，别忘了点 ⭐ **Star** 支持我们，并欢迎进群一起交流！🎵
 
 *免责声明：本项目仅用于学习与技术研究，请遵守相关平台服务条款与当地法律法规，勿用于商业或侵权用途。*
