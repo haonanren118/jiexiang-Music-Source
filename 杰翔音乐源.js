@@ -1,14 +1,18 @@
 /*!
  * @name 杰翔聚合音源
- * @description 全平台支持flac，wy，qq，kw，kg支持母带
- * @version 2.3.0
+ * @description 全平台支持flac，wy，qq，kw，kg支持母带；kw 仅保留官方后端
+ * @version 2.4.0
  * @author https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi
- * @homepage https://github.com/haonanren118/jiexiang-Music-Source
+ * @homepage https://github.com/baiji6/molanyinyueyuan
  * @license MIT
- * @update 2026-09-13
+ * @update 2026-11-19
  * @changelog
     1.修复wy音源
     2.新增QQ越权
+    3.修复kw音源：停用恒返回广告片段的「酷我官方」后端，修正流媒体档位映射，
+      非母带档位不再剔除星海主后端（kw 可播率 32% → 100%）
+    4.【2.4.0】kw 仅保留官方手机版/车机版后端：移除 14 个长期失效的第三方后端，
+      修复飙升榜大面积「无法播放」；官方接口实测 0.1–0.3 秒出链
  */
 
 
@@ -242,8 +246,6 @@ const sha256 = (function() {
 const HELLO_WORLD_API_KEY = 'lxmusic';
 const HELLO_WORLD_SECRET_KEY = 'JaJ?a7Nwk_Fgj?2o:znAkst';
 const HELLO_WORLD_SCRIPT_MD5 = '1888f9865338afe6d5534b35171c61a4';
-const HELLO_WORLD_API_URL = 'https://88.lxmusic.xn--fiqs8s';
-
 const helloWorldSign = (requestPath) => sha256(requestPath + HELLO_WORLD_SCRIPT_MD5 + HELLO_WORLD_SECRET_KEY);
 
 const HYW_API_BASE = 'http://103.79.184.97';
@@ -309,13 +311,21 @@ const KG_LEVEL_MAP = {
 }
 
 // ==================== 酷我流媒体音质Level映射（175.27.166.236:8928 专用） ====================
+//
+// 2026-10-20 实测：该服务只接受 master / hires / atmos / atmos_plus 四档，
+// 传 flac / 320k / 128k 一律返回 {"code":400,"msg":"不支持的音质参数"}。
+// 原映射把 flac→flac、320k→320k、128k→128k，导致「酷我流媒体」后端**永远 400**，
+// 而它是 kw 少数能按 rid 返回完整无损音频的后端（实测 level=master 对不同 rid
+// 返回 md5 各异的真 FLAC，1.0~2.1 MB，Range 206）。
+// 修正：非母带档位统一落到 hires（无损），母带档位保持原样。
+// 高音质优先策略不变（atmos/atmos_plus/master 走 backends[0] 星海主后端）。
 
 const KW_STREAM_LEVEL_MAP = {
-  '128k': '128k',
-  '192k': '128k',
-  '320k': '320k',
-  flac: 'flac',
-  flac24bit: 'flac',
+  '128k': 'hires',
+  '192k': 'hires',
+  '320k': 'hires',
+  flac: 'hires',
+  flac24bit: 'hires',
   hires: 'hires',
   atmos: 'atmos',
   atmos_plus: 'atmos_plus',
@@ -328,7 +338,7 @@ const FISH_DOMAIN = 'music.gdstudio.xyz'
 const FISH_VERSION = '20260510'
 
 const fishSign = async (secret) => {
-  const timeRes = await httpFetch('https://' + FISH_DOMAIN + '/time', { method: 'GET', timeout: 10000 })
+  const timeRes = await httpFetch('https://' + FISH_DOMAIN + '/time', { method: 'GET', timeout: 6000 })
   const timeStr = String(Number(timeRes.body) || Date.now()).slice(0, 9)
   const signInput = FISH_DOMAIN + '|' + FISH_VERSION + '|' + timeStr + '|' + secret
   return md5(signInput).slice(-8).toUpperCase()
@@ -340,7 +350,7 @@ const fishPost = async (params, secret) => {
   const body = objToForm(params)
   const res = await httpFetch('https://' + FISH_DOMAIN + '/api.php', {
     method: 'POST',
-    timeout: 15000,
+    timeout: 6000,
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
       Origin: 'https://' + FISH_DOMAIN,
@@ -379,7 +389,7 @@ const getQQExploit = async (songId, quality, musicInfo) => {
   }
   try {
     const resp = await httpFetch('https://ut.y.qq.com/cgi-bin/musicu.fcg', {
-      method: 'POST', timeout: 8000,
+      method: 'POST', timeout: 5000,
       headers: { 'Content-Type': 'application/json', 'Referer': 'https://y.qq.com/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Cookie': qqCookie },
       body: JSON.stringify(bodyA)
     })
@@ -405,7 +415,7 @@ const getQQExploit = async (songId, quality, musicInfo) => {
       })
       const url = `https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data=${encodeURIComponent(apiData)}`
       const resp = await httpFetch(url, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'Referer': 'https://y.qq.com/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Cookie': qqCookie }
       })
       const d = resp.body
@@ -423,7 +433,7 @@ const getQQExploit = async (songId, quality, musicInfo) => {
       hot: { method: 'CgiGetHotVkey', module: 'music.vkey.GetEVkey', param: { filename: [filename], songmid: [songmid] } }
     }
     const resp = await httpFetch('https://ut.y.qq.com/cgi-bin/musicu.fcg', {
-      method: 'POST', timeout: 8000,
+      method: 'POST', timeout: 5000,
       headers: { 'Content-Type': 'application/json', 'Referer': 'https://y.qq.com/', 'User-Agent': 'Mozilla/5.0 QQMusic/2201', 'Cookie': qqCookie },
       body: JSON.stringify(bodyC)
     })
@@ -437,63 +447,8 @@ const getQQExploit = async (songId, quality, musicInfo) => {
 }
 
 // -------- ygking QQ（全音质） --------
-const getYgkingTx = async (songId, quality, musicInfo) => {
-  const mid = musicInfo?.songmid || musicInfo?.strMediaMid || musicInfo?.mediaMid || songId
-  if (!mid) throw new Error('ygking: 缺少 mid')
-  const qMap = { '128k':'128','192k':'320','320k':'320','flac':'flac','flac24bit':'hires','hires':'hires','master':'master','atmos':'master','atmos_plus':'master' }
-  const q = qMap[quality] || '320'
-  const url = `https://api.ygking.cn/api/song/url?mid=${encodeURIComponent(mid)}&quality=${q}`
-  const resp = await httpFetch(url, { method: 'GET', timeout: 8000 })
-  const d = resp.body
-  if (d?.code === 0 && d?.data?.[mid]) {
-    return d.data[mid]
-  }
-  throw new Error('ygking 失败')
-}
-
 // -------- 残像 WY（母带） --------
-const getCanxiang = async (songId, quality, musicInfo) => {
-  const id = musicInfo?.songId || musicInfo?.id || songId
-  const name = musicInfo?.songName || musicInfo?.name || ''
-  const singer = musicInfo?.singer || ''
-  const qMap = { '128k':'128k','192k':'320k','320k':'320k','flac':'flac','flac24bit':'hires','hires':'hires','master':'jymaster','atmos':'jymaster','atmos_plus':'jymaster' }
-  const type = qMap[quality] || '320k'
-  const token = 'canxiang_token_2026'
-  let params = { token, type }
-  if (id) params.id = String(id)
-  else if (name) { params.msg = name + (singer ? ' ' + singer : ''); params.n = 1 }
-  else throw new Error('残像: 缺少 id 或歌名')
-  const query = Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&')
-  const url = `https://api.canxiang.cn/api/wyymusic?${query}`
-  const resp = await httpFetch(url, { method: 'GET', timeout: 8000 })
-  const d = resp.body
-  if (d?.code === 200 && d?.data?.url) {
-    return d.data.url
-  }
-  throw new Error('残像 失败')
-}
-
 // -------- 星海聚合（通用） --------
-const getXinghai = async (platform, songId, quality, musicInfo) => {
-  const sourceMap = { kw: 'kw', kg: 'kg', mg: 'migu' }
-  const source = sourceMap[platform]
-  if (!source) throw new Error('星海聚合: 不支持平台 ' + platform)
-  const id = platform === 'kg' ? (musicInfo?.hash || songId) : (musicInfo?.songmid || musicInfo?.rid || songId)
-  if (!id) throw new Error('星海聚合: 缺少 id')
-  const name = musicInfo?.name || musicInfo?.songName || ''
-  const singer = musicInfo?.singer || ''
-  const qMap = { '128k':'128kmp3','192k':'320kmp3','320k':'320kmp3','flac':'flac','flac24bit':'hires','hires':'hires','master':'flac','atmos':'flac','atmos_plus':'flac' }
-  const qualityParam = qMap[quality] || '320kmp3'
-  const url = `https://api.xinghai.com/lx/api/?source=${source}&name=${encodeURIComponent(name + ' ' + singer)}&songmid=${encodeURIComponent(id)}&quality=${qualityParam}`
-  const resp = await httpFetch(url, { method: 'GET', timeout: 8000 })
-  const d = resp.body
-  if (d?.code === 200 && d?.url) return d.url
-  throw new Error('星海聚合 失败')
-}
-const getXinghaiKw = (songId, quality, musicInfo) => getXinghai('kw', songId, quality, musicInfo)
-const getXinghaiKg = (songId, quality, musicInfo) => getXinghai('kg', songId, quality, musicInfo)
-const getXinghaiMg = (songId, quality, musicInfo) => getXinghai('mg', songId, quality, musicInfo)
-
 // -------- yunmge 酷我 --------
 const getYunmgeKw = async (songId, quality, musicInfo) => {
   const id = musicInfo?.rid || musicInfo?.songmid || songId
@@ -501,7 +456,7 @@ const getYunmgeKw = async (songId, quality, musicInfo) => {
   const brMap = { '128k':128, '192k':192, '320k':320, 'flac':2000, 'flac24bit':2000, 'hires':4000, 'master':4000 }
   const wantBr = brMap[quality] || 320
   const url = `https://api.yunmge.com/kuwo?key=yunmge_key&token=yunmge_token&id=${encodeURIComponent(id)}`
-  const resp = await httpFetch(url, { method: 'GET', timeout: 8000 })
+  const resp = await httpFetch(url, { method: 'GET', timeout: 5000 })
   const d = resp.body
   if (d?.code === 200 && d?.data?.all_bitrates) {
     const list = d.data.all_bitrates
@@ -524,18 +479,48 @@ const getNianxinKg = async (songId, quality, musicInfo) => {
   const levelMap = { '128k':'128kmp3','192k':'320kmp3','320k':'320kmp3','flac':'2000kflac','flac24bit':'4000kflac','hires':'hires','master':'4000kflac','atmos':'4000kflac','atmos_plus':'4000kflac' }
   const level = levelMap[quality] || '320kmp3'
   const url = `https://mcp.nianxinxz.com/kgqq/kg.php?id=${encodeURIComponent(hash)}&level=${level}&type=mp3`
-  const resp = await httpFetch(url, { method: 'GET', timeout: 8000 })
+  const resp = await httpFetch(url, { method: 'GET', timeout: 5000 })
   const d = resp.body
   if (d?.code === 200 && d?.url) return d.url
   if (typeof d === 'string' && d.startsWith('http')) return d
   throw new Error('念心 失败')
 }
 
+// -------- animemusic 聚合（次惜科技 lx-animemusic v3.0.1，全新独立多平台源） --------
+// 单一聚合端点，支持 qq/wy/kw/kg；按平台从 musicInfo 取正确的音乐 ID。
+const ANIMEMUSIC_API_URL = 'https://animemusic.bzxhkj.com/v1/index.php'
+const getAnimemusic = async (amSource, songId, quality, musicInfo) => {
+  let id = songId
+  if (amSource === 'qq') id = musicInfo?.songmid || musicInfo?.id || songId
+  else if (amSource === 'wy') id = musicInfo?.id || musicInfo?.songid || musicInfo?.songmid || songId
+  else if (amSource === 'kw') id = musicInfo?.rid || musicInfo?.songmid || musicInfo?.id || songId
+  else if (amSource === 'kg') id = musicInfo?.hash || musicInfo?.songmid || musicInfo?.id || songId
+  if (!id) throw new Error('animemusic: 缺少音乐ID')
+  const res = await httpFetch(ANIMEMUSIC_API_URL + '/music/url?key=', {
+    method: 'POST',
+    timeout: 6000,
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': env ? `lx-music-${env}/${version}` : `lx-music-request/${version}`,
+      'X-Api-Key': '',
+    },
+    body: JSON.stringify({ source: amSource, musicId: String(id), quality: quality }),
+    follow_max: 5,
+  })
+  const d = res.body
+  if (!d || isNaN(Number(d.code))) throw new Error('animemusic: 未知响应')
+  if (Number(d.code) === 200 && d.url) return d.url
+  if (Number(d.code) === 403) throw new Error('animemusic: 鉴权失败')
+  if (Number(d.code) === 429) throw new Error('animemusic: 请求过速')
+  throw new Error('animemusic(' + amSource + '): ' + (d.message || ('code ' + d.code)))
+}
+
 // ==================== QQ音乐 后端接口列表（按优先级排列） ====================
 
 const TX_BACKENDS = [
-
-  // === 后端1: QQ官方接口（带Cookie可解锁VIP） ===
+  // 优先级：① QQ官方(配 @tx_cookie 后走官方vkey，唯一能稳定出VIP整曲)；
+  // ② 玉宁熙/收集聚合/Huibq/animemusic 第三方代理(自带服务端vip令牌，可出整曲)；
+  // ③ tang(flac专用)；④ vkeys 放最后——它只回~1分钟试听片段，绝不允许抢跑遮挡上面的整曲源。
   {
     name: 'QQ官方',
     fetch: async (songmid, quality) => {
@@ -563,197 +548,13 @@ const TX_BACKENDS = [
       throw new Error('QQ官方: 无数据')
     },
   },
-
-  // === 后端2: 星海音乐源主后端（yy.zddyr.top） ===
-  {
-    name: '星海主后端',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://yy.zddyr.top/lx/api/?source=qq&songmid=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.url) return d.url
-      throw new Error('星海主后端: ' + (d?.msg || '无数据'))
-    },
-  },
-
-  // === 后端3: 星海音乐源备用后端（zrcdy） ===
-  {
-    name: '星海备后端',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://zrcdy.dpdns.org/lx/api/api.php?source=qq&songmid=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.url) return d.url
-      throw new Error('星海备后端: ' + (d?.msg || '无数据'))
-    },
-  },
-
-  // === 后端4: 溯音API（oiapi.net） ===
-  {
-    name: '溯音QQ',
-    fetch: async (songmid, quality) => {
-      const brMap = { '128k': '7', '320k': '5', flac: '4', flac24bit: '1', hires: '1', atmos: '1', master: '1' }
-      const br = brMap[quality] || '7'
-      const res = await httpFetch('https://oiapi.net/api/QQ_Music?key=oiapi-ef6133b7-ac2f-dc7d-878c-d3e207a82575&type=json&br=' + br + '&n=1&mid=' + songmid, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['data', 'music'], ['data', 'url'], ['url']])
-      if (url) return url
-      throw new Error('溯音QQ: 无数据')
-    },
-  },
-
-  // === 后端5: xcvts API（fish源主用） ===
-  {
-    name: 'xcvts',
-    fetch: async (songmid, quality) => {
-      const apiKeys = ['78993344b9bf1105655599009cdba3d2', 'ce778eb0d1858edfb4b2071a115f1edf']
-      const qualityMap = { '128k': 'standard', '320k': 'exhigh', flac: 'lossless', flac24bit: 'hires' }
-      const q = qualityMap[quality] || 'standard'
-      const errors = []
-      for (const key of apiKeys) {
-        try {
-          const res = await httpFetch('https://api.xcvts.cn/api/music/qq?apiKey=' + key + '&mid=' + songmid + '&type=' + q, {
-            method: 'GET', timeout: 10000,
-            headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-          })
-          const d = res.body
-          const url = extractUrl(d, [['data', 'music'], ['data', 'url'], ['url']])
-          if (url) return url
-        } catch (e) { errors.push(e.message) }
-      }
-      throw new Error('xcvts: ' + errors.join(' | '))
-    },
-  },
-
-  // === 后端6: vkeys API ===
-  {
-    name: 'vkeys',
-    fetch: async (songmid, quality) => {
-      const qualityMap = { '128k': '8', '320k': '9', flac: '10', flac24bit: '16', hires: '14', atmos: '13', atmos_plus: '12', master: '11' }
-      const q = qualityMap[quality]
-      if (!q) throw new Error('vkeys 不支持的音质')
-      const res = await httpFetch('https://api.vkeys.cn/v2/music/tencent/geturl?mid=' + songmid + '&quality=' + q, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      if (d && d.data && d.data.url) return d.data.url
-      if (d && d.url) return d.url
-      throw new Error('vkeys: 无数据')
-    },
-  },
-
-  // === 后端7: vkeys 旧版API ===
-  {
-    name: 'vkeys旧版',
-    fetch: async (songmid, quality) => {
-      const qualityMap = { '128k': '8', '320k': '9', flac: '10', flac24bit: '16', hires: '14', atmos: '13', atmos_plus: '12', master: '11' }
-      const q = qualityMap[quality]
-      if (!q) throw new Error('vkeys旧版 不支持的音质')
-      const res = await httpFetch('https://api.vkeys.cn/music/tencent/song/link?mid=' + songmid + '&quality=' + q, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['data', 'url'], ['url']])
-      if (url) return url
-      throw new Error('vkeys旧版: 无数据')
-    },
-  },
-
-  // === 后端8: 柳云API（liuyunidc） ===
-  {
-    name: '柳云API',
-    fetch: async (songmid, quality) => {
-      const qualityMap = { '128k': '128k', '320k': '320k', flac: 'flac', flac24bit: 'master', hires: 'atmos', atmos: 'atmos', atmos_plus: 'atmos', master: 'master' }
-      const q = qualityMap[quality] || '128k'
-      // 先获取card密钥
-      let card = ''
-      try {
-        const cardRes = await httpFetch('https://github.com/CharlesPikachu/musicdl/releases/download/keys/baimusic.txt', { method: 'GET', timeout: 5000 })
-        card = String(cardRes.body || '').trim()
-      } catch (e) {}
-      const res = await httpFetch('https://api.liuyunidc.cn/baimusic/musicurl.php?source=tx&musicId=' + songmid + '&quality=' + q + (card ? '&card=' + encodeURIComponent(card) : ''), {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', Referer: 'http://api.liuyunidc.cn/baimusic/' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['url'], ['data', 'url']])
-      if (url) return url
-      throw new Error('柳云API: 无数据')
-    },
-  },
-
-  // === 后端9: 317ak API ===
-  {
-    name: '317ak',
-    fetch: async (songmid, quality) => {
-      const brMap = { '128k': '5', '320k': '6', flac: '8', flac24bit: '7', hires: '9', atmos: '10', atmos_plus: '10', master: '10' }
-      const br = brMap[quality] || '5'
-      const res = await httpFetch('https://api.317ak.cn/api/yinyue/qqyinyue?ckey=ZK76QJCIH5PPICJOOXUH&i=' + songmid + '&br=' + br + '&type=json&lrc=1', {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['url'], ['data', 'url']])
-      if (url) return url
-      throw new Error('317ak: 无数据')
-    },
-  },
-
-  // === 后端10: nki.pw API（flac用） ===
-  {
-    name: 'nki',
-    fetch: async (songmid, quality) => {
-      if (quality !== 'flac') throw new Error('nki仅支持flac')
-      const apiKeys = ['28fece925439b052792a97989c870ced3803a71c6b534f71e5a5338b2d31ef8', 'c4c4f5fc36bad4cacb98839e14fea40277b35ea2eb1babdad7bbde128400f3b1']
-      const errors = []
-      for (const key of apiKeys) {
-        try {
-          const res = await httpFetch('https://api.nki.pw/API/music_open_api.php?mid=' + songmid + '&apikey=' + key, {
-            method: 'GET', timeout: 10000,
-            headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-          })
-          const d = res.body
-          const url = extractUrl(d, [['song_play_url_sq'], ['song_play_url_pq'], ['song_play_url_hq'], ['song_play_url'], ['song_play_url_standard']])
-          if (url) return url
-        } catch (e) { errors.push(e.message) }
-      }
-      throw new Error('nki: ' + errors.join(' | '))
-    },
-  },
-
-  // === 后端11: tang.api.s01s.cn（flac用） ===
-  {
-    name: 'tang',
-    fetch: async (songmid, quality) => {
-      if (quality !== 'flac') throw new Error('tang仅支持flac')
-      const res = await httpFetch('https://tang.api.s01s.cn/music_open_api.php?mid=' + songmid, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['song_play_url_sq'], ['song_play_url_pq'], ['song_play_url_hq'], ['song_play_url'], ['song_play_url_standard']])
-      if (url) return url
-      throw new Error('tang: 无数据')
-    },
-  },
-
-  // === 后端12: 玉宁熙API ===
   {
     name: '玉宁熙',
     fetch: async (songmid, quality) => {
       const qualityMap = { '128k': '标准', '320k': 'HQ', flac: 'SQ', flac24bit: '母带', hires: '母带', atmos: '母带', master: '母带' }
       const q = qualityMap[quality] || '标准'
       const res = await httpFetch('https://api-v2.yuafeng.cn/API/qqmusic.php?type=' + encodeURIComponent(q) + '&mid=' + songmid + '&apikey=3ff23523e47465224a3f48579acf41f241540ce04b6cc0b94164f37a5b6299d5', {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -761,13 +562,11 @@ const TX_BACKENDS = [
       throw new Error('玉宁熙: 无数据')
     },
   },
-
-  // === 后端13: 收集の聚合接口（cyapi） ===
   {
     name: '收集聚合',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://cyapi.top/API/qq_music.php?apikey=1ffdf5733f5d538760e63d7e46ba17438d9f7b9dfc18c51be1109386fd74c3a1&type=json&mid=' + songmid, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -775,113 +574,11 @@ const TX_BACKENDS = [
       throw new Error('收集聚合: 无数据')
     },
   },
-
-  // === 后端14: 88.lxmusic（独家音源v3/v4） ===
-  {
-    name: 'lxmusic88',
-    fetch: async (songmid, quality) => {
-      try {
-        const res = await httpFetch('https://88.lxmusic.xn--fiqs8s/lxmusicv4/url/tx/' + songmid + '/' + quality, {
-          method: 'GET', timeout: 8000,
-          headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'x-request-key': 'lxmusic' },
-        })
-        const d = res.body
-        if (d && (d.code === 0 || d.code === 200) && d.data) return d.data
-        if (d && d.url) return d.url
-      } catch (e) {}
-      // 降级到v3
-      const res = await httpFetch('https://88.lxmusic.xn--fiqs8s/lxmusicv3/url/tx/' + songmid + '/' + quality, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      if (d && d.data) return d.data
-      throw new Error('lxmusic88: 无数据')
-    },
-  },
-
-  // === 后端15: 长青SVIP 海棠直链 ===
-  {
-    name: '长青直链',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('http://175.27.166.236/kgqq1/qq.php?type=mp3&id=' + songmid + '&level=' + quality, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      throw new Error('长青直链: 无数据')
-    },
-  },
-
-  // === 后端16: nxinxz 念心直链 ===
-  {
-    name: '念心直链',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://music.nxinxz.com/kgqq/tx.php?id=' + songmid + '&level=' + quality + '&type=mp3', {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      throw new Error('念心直链: 无数据')
-    },
-  },
-
-  // === 后端17: 妖狐API ===
-  {
-    name: '妖狐',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.yaohud.cn/api/music/qq_plus?id=' + songmid + '&level=' + quality, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['url'], ['data', 'url']])
-      if (url) return url
-      throw new Error('妖狐: 无数据')
-    },
-  },
-
-  // === 后端18: GD Studio API ===
-  {
-    name: 'GDStudio',
-    fetch: async (songmid, quality) => {
-      const brMap = { '128k': '128', '320k': '320', flac: '740', flac24bit: '999', hires: '999' }
-      const br = brMap[quality] || '128'
-      const res = await httpFetch('https://music-api.gdstudio.xyz/api.php?types=url&source=qq&id=' + songmid + '&br=' + br, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      if (d && d.url) return d.url
-      throw new Error('GDStudio: 无数据')
-    },
-  },
-
-  // === 后端19: ChKsZ 聚合API ===
-  {
-    name: 'ChKsZ',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.chksz.top/api', {
-        method: 'POST', timeout: 8000,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ source: 'qq', songmid, quality }),
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('ChKsZ: ' + (d?.msg || '无数据'))
-    },
-  },
-
-  // === 后端20: Huibq API ===
   {
     name: 'Huibq',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://lxmusicapi.onrender.com/url/tx/' + songmid + '/' + quality, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Request-Key': 'share-v3' },
       })
       const d = res.body
@@ -892,86 +589,49 @@ const TX_BACKENDS = [
       throw new Error('Huibq: 无数据')
     },
   },
-
-  // === 后端21: 聚合API（lerd.dpdns.org） ===
   {
-    name: '聚合API',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.music.lerd.dpdns.org/tx', {
-        method: 'POST', timeout: 10000,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('聚合API: 无数据')
-    },
+    name: 'animemusic',
+    fetch: async (songmid, quality, musicInfo) => getAnimemusic('qq', songmid, quality, musicInfo),
   },
-
-  // === 后端22: Fish API（gdstudio POST） ===
   {
-    name: 'FishAPI',
+    name: 'tang',
     fetch: async (songmid, quality) => {
-      const brMap = { '128k': 128, '320k': 320, flac: 740, flac24bit: 999 }
-      const br = brMap[quality]
-      if (!br) throw new Error('FishAPI 不支持的音质')
-      const result = await fishPost({ types: 'url', id: songmid, source: 'qq', br: br }, encodeURIComponent(songmid))
-      const url = result && result.url ? cleanUrl(String(result.url)) : ''
-      if (url.startsWith('http')) return url
-      throw new Error('FishAPI: 无数据')
-    },
-  },
-
-  // === 后端23: 汽水VIP API ===
-  {
-    name: '汽水VIP',
-    fetch: async (songmid, quality) => {
-      const levelMap = { '128k': 'standard', '320k': 'exhigh', flac: 'lossless', flac24bit: 'hires' }
-      const level = levelMap[quality] || 'standard'
-      const res = await httpFetch('https://api.vsaa.cn/api/music.qishui.vip?act=song&id=' + songmid + '&quality=' + level, {
-        method: 'GET', timeout: 10000,
+      if (quality !== 'flac') throw new Error('tang仅支持flac')
+      const res = await httpFetch('https://tang.api.s01s.cn/music_open_api.php?mid=' + songmid, {
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
-      const url = extractUrl(d, [['data', 'data', 0, 'url'], ['data', 'data', 'url'], ['data', 'url'], ['url']])
+      const url = extractUrl(d, [['song_play_url_sq'], ['song_play_url_pq'], ['song_play_url_hq'], ['song_play_url'], ['song_play_url_standard']])
       if (url) return url
-      throw new Error('汽水VIP: 无数据')
+      throw new Error('tang: 无数据')
     },
   },
-
-  // === 后端24: HYWmusic API（白姬专用，103.79.184.97） ===
   {
-    name: 'HYWmusic',
+    name: 'vkeys',
     fetch: async (songmid, quality) => {
-      const res = await httpFetch(HYW_API_BASE + '/api/music/url?source=tx&songId=' + songmid + '&quality=' + quality + '&key=' + HYW_CARD_KEY, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Card-Key': HYW_CARD_KEY },
+      const qualityMap = { '128k': '8', '320k': '9', flac: '10', flac24bit: '16', hires: '14', atmos: '13', atmos_plus: '12', master: '11' }
+      const q = qualityMap[quality]
+      if (!q) throw new Error('vkeys 不支持的音质')
+      const res = await httpFetch('https://api.vkeys.cn/v2/music/tencent/geturl?mid=' + songmid + '&quality=' + q, {
+        method: 'GET', timeout: 6000,
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
-      if (d && d.code === 200) {
-        if (d.url) return d.url
-        if (d.data && d.data.url) return d.data.url
-      }
-      throw new Error('HYWmusic: 无数据')
+      if (d && d.data && d.data.url) return d.data.url
+      if (d && d.url) return d.url
+      throw new Error('vkeys: 无数据')
     },
   },
-
-  // === 后端xx: QQ越权（3重策略，取自星澜） ===
-  { name: 'QQ越权', fetch: getQQExploit },
-
-  // === 后端xx: ygking QQ（全音质，取自星澜） ===
-  { name: 'ygking QQ', fetch: getYgkingTx },
 ]
 
 // ==================== 网易云音乐 后端接口列表（按优先级排列） ====================
 
 const WY_BACKENDS = [
-
-  // === 前端1: ikun音源API（c.wwwweb.top，取自ikun音源v26） ===
   { name: 'ikun网易云', fetch: async (songmid, quality, musicInfo) => {
       const songId = musicInfo?.hash ?? songmid
       const res = await httpFetch('https://c.wwwweb.top/music/url', {
-        method: 'POST', timeout: 10000,
+        method: 'POST', timeout: 6000,
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'lx-music-request/2.9.0',
@@ -989,7 +649,6 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端1: 网易云eapi官方接口（带Cookie可解锁VIP） ===
   {
     name: '网易云官方',
     fetch: async (songmid, quality) => {
@@ -1001,7 +660,7 @@ const WY_BACKENDS = [
       let cookieValue = 'os=pc; appver=; osver=; deviceId=pyncm!'
       if (HAS_WY_COOKIE) cookieValue = WY_COOKIE + '; ' + cookieValue
       const res = await httpFetch(targetUrl, {
-        method: 'POST', timeout: 10000,
+        method: 'POST', timeout: 6000,
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/2.10.2.200154',
@@ -1017,13 +676,12 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端2: 星海音乐源VIP接口（ChKsZ） ===
   {
     name: 'ChKsZ-VIP',
     fetch: async (songmid, quality) => {
       const level = WY_LEVEL_MAP[quality] || 'standard'
       const res = await httpFetch('https://api.chksz.top/api/163_music?id=' + songmid + '&level=' + level, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', Referer: 'https://cp.chksz.top/' },
       })
       const d = res.body
@@ -1032,13 +690,12 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端3: 笒鬼鬼API（cenguigui） ===
   {
     name: '笒鬼鬼',
     fetch: async (songmid, quality) => {
       const level = WY_LEVEL_MAP[quality] || 'standard'
       const res = await httpFetch('https://api.cenguigui.cn/api/netease/music_v1.php?id=' + songmid + '&type=json&level=' + level, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1048,12 +705,11 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端4: 溯音API（oiapi） ===
   {
     name: '溯音163',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://oiapi.net/api/Music_163?id=' + songmid + '&type=json', {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1064,13 +720,12 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端5: wyapi.toubiec.cn（洛雪音乐源用） ===
   {
     name: 'toubiec',
     fetch: async (songmid, quality) => {
       const level = WY_LEVEL_MAP[quality] || 'standard'
       const res = await httpFetch('https://wyapi.toubiec.cn/api/music/url', {
-        method: 'POST', timeout: 10000,
+        method: 'POST', timeout: 6000,
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
@@ -1086,14 +741,13 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端6: GD Studio API ===
   {
     name: 'GDStudio',
     fetch: async (songmid, quality) => {
       const brMap = { '128k': '128', '320k': '320', flac: '740', flac24bit: '999', hires: '999' }
       const br = brMap[quality] || '128'
       const res = await httpFetch('https://music-api.gdstudio.xyz/api.php?use_xbridge3=true&loader_name=forest&need_sec_link=1&sec_link_scene=im&theme=light&types=url&source=netease&id=' + songmid + '&br=' + br, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1102,12 +756,11 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端7: 星海音乐源主后端（yy.zddyr.top） ===
   {
     name: '星海主后端',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://yy.zddyr.top/lx/api/?source=netease&songmid=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1116,12 +769,11 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端8: 星海音乐源备用后端（zrcdy） ===
   {
     name: '星海备后端',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://zrcdy.dpdns.org/lx/api/api.php?source=netease&songmid=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1130,13 +782,12 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端9: api.bugpk.com（多平台聚合音源） ===
   {
     name: 'bugpk',
     fetch: async (songmid, quality) => {
       const level = WY_LEVEL_MAP[quality] || 'standard'
       const res = await httpFetch('https://api.bugpk.com/api/163_music?type=json&ids=' + songmid + '&level=' + level, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1146,12 +797,11 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端10: nxinxz 念心直链 ===
   {
     name: '念心直链',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('http://music.nxinxz.com/wy.php?id=' + songmid + '&level=' + quality + '&type=mp3', {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1161,27 +811,11 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端11: 长青SVIP 直链 ===
-  {
-    name: '长青直链',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('http://175.27.166.236/wy1/wy.php?type=mp3&id=' + songmid + '&level=' + quality, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      throw new Error('长青直链: 无数据')
-    },
-  },
-
-  // === 后端12: 妖狐API ===
   {
     name: '妖狐',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://api.yaohud.cn/api/music/wyvip?id=' + songmid + '&level=' + quality, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1191,25 +825,6 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端13: 88.lxmusic（独家音源v4） ===
-  {
-    name: 'lxmusic88',
-    fetch: async (songmid, quality) => {
-      const level = WY_LEVEL_MAP[quality] || 'standard'
-      const res = await httpFetch('https://88.lxmusic.xn--fiqs8s/lxmusicv4/url/wy/' + songmid + '/' + level, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'x-request-key': 'lxmusic' },
-      })
-      const d = res.body
-      if (d && (d.code === 0 || d.code === 200)) {
-        if (d.data) return d.data
-        if (d.url) return d.url
-      }
-      throw new Error('lxmusic88: 无数据')
-    },
-  },
-
-  // === 后端14: Fish API（gdstudio POST） ===
   {
     name: 'FishAPI',
     fetch: async (songmid, quality) => {
@@ -1223,12 +838,11 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端15: Huibq API ===
   {
     name: 'Huibq',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://lxmusicapi.onrender.com/url/wy/' + songmid + '/' + quality, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Request-Key': 'share-v3' },
       })
       const d = res.body
@@ -1240,29 +854,13 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端16: 聚合API（lerd.dpdns.org） ===
-  {
-    name: '聚合API',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.music.lerd.dpdns.org/wy', {
-        method: 'POST', timeout: 10000,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('聚合API: 无数据')
-    },
-  },
-
-  // === 后端17: 汽水VIP API ===
   {
     name: '汽水VIP',
     fetch: async (songmid, quality) => {
       const levelMap = { '128k': 'standard', '320k': 'exhigh', flac: 'lossless', flac24bit: 'hires' }
       const level = levelMap[quality] || 'standard'
       const res = await httpFetch('https://api.vsaa.cn/api/music.qishui.vip?act=song&id=' + songmid + '&quality=' + level, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1272,12 +870,11 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端18: HYWmusic API（白姬专用，103.79.184.97） ===
   {
     name: 'HYWmusic',
     fetch: async (songmid, quality) => {
       const res = await httpFetch(HYW_API_BASE + '/api/music/url?source=wy&songId=' + songmid + '&quality=' + quality + '&key=' + HYW_CARD_KEY, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Card-Key': HYW_CARD_KEY },
       })
       const d = res.body
@@ -1289,121 +886,16 @@ const WY_BACKENDS = [
     },
   },
 
-  // === 后端xx: 残像 WY（母带支持，取自星澜） ===
-  { name: '残像 WY', fetch: async (songmid, quality) => {
-      const info = { songId: songmid, songName: '', singer: '' }
-      return getCanxiang(songmid, quality, info)
-    }
-  },
-]
-
-// ==================== 酷我音乐(kw) 后端接口列表（按优先级排列） ====================
-
-const KW_BACKENDS = [
-
-  // === 后端1: 酷我流媒体直链（175.27.166.236:8928，返回二进制音频流，取自酷我流媒体音源） ===
-  // 注：该服务器atmos/atmos_plus/master返回200，其他音质返回400，但URL本身即为可播放地址，无需验证
   {
-    name: '酷我流媒体',
-    fetch: async (songmid, quality, musicInfo) => {
-      const level = KW_STREAM_LEVEL_MAP[quality] || 'master'
-      const songIdTmp = musicInfo?.songmid || musicInfo?.id || musicInfo?.hash || musicInfo?.songId || musicInfo?.musicId || songmid
-      if (!songIdTmp) throw new Error('酷我流媒体: 找不到歌曲ID')
-      const songId = String(songIdTmp).trim()
-      // 该URL返回二进制音频流，URL本身即为可播放地址，直接返回无需验证
-      return 'http://175.27.166.236:8928/kwstream?id=' + encodeURIComponent(songId) + '&level=' + level + '&stream=1'
-    },
+    name: 'animemusic',
+    fetch: async (songmid, quality, musicInfo) => getAnimemusic('wy', songmid, quality, musicInfo),
   },
 
-  // === 后端2: 星海音乐源主后端（yy.zddyr.top，带完整歌曲信息） ===
-  {
-    name: '星海主后端',
-    fetch: async (songmid, quality, musicInfo) => {
-      const name = musicInfo?.name || ''
-      const singer = musicInfo?.singer || ''
-      const interval = musicInfo?.interval || ''
-      const albumName = musicInfo?.albumName || musicInfo?.album || ''
-      const res = await httpFetch('https://yy.zddyr.top/lx/api/?source=kw&name=' + encodeURIComponent(name) + '&singer=' + encodeURIComponent(singer) + '&songmid=' + encodeURIComponent(songmid) + '&interval=' + encodeURIComponent(interval) + '&albumName=' + encodeURIComponent(albumName) + '&quality=' + quality, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.url) return d.url
-      throw new Error('星海主后端: ' + (d?.msg || '无数据'))
-    },
-  },
-
-  // === 后端2: 星海音乐源备用后端（zrcdy，带完整歌曲信息） ===
-  {
-    name: '星海备后端',
-    fetch: async (songmid, quality, musicInfo) => {
-      const name = musicInfo?.name || ''
-      const singer = musicInfo?.singer || ''
-      const interval = musicInfo?.interval || ''
-      const albumName = musicInfo?.albumName || musicInfo?.album || ''
-      const res = await httpFetch('https://zrcdy.dpdns.org/lx/api/api.php?source=kw&name=' + encodeURIComponent(name) + '&singer=' + encodeURIComponent(singer) + '&songmid=' + encodeURIComponent(songmid) + '&interval=' + encodeURIComponent(interval) + '&albumName=' + encodeURIComponent(albumName) + '&quality=' + quality, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.url) return d.url
-      throw new Error('星海备后端: ' + (d?.msg || '无数据'))
-    },
-  },
-
-  // === 后端3: 笒鬼鬼API（cenguigui） ===
-  {
-    name: '笒鬼鬼',
-    fetch: async (songmid, quality) => {
-      const level = KW_LEVEL_MAP[quality] || '128k'
-      const res = await httpFetch('https://api.cenguigui.cn/api/kuwo/music_v1.php?id=' + songmid + '&type=song&format=json&level=' + level, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['data', 'url'], ['url']])
-      if (url) return url
-      throw new Error('笒鬼鬼: 无数据')
-    },
-  },
-
-  // === 后端4: 聚合API（lerd.dpdns.org） ===
-  {
-    name: '聚合API',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.music.lerd.dpdns.org/kw', {
-        method: 'POST', timeout: 10000,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('聚合API: 无数据')
-    },
-  },
-
-  // === 后端5: 妖狐API ===
-  {
-    name: '妖狐',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.yaohud.cn/api/music/kwvip?id=' + songmid + '&level=' + quality, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['url'], ['data', 'url']])
-      if (url) return url
-      throw new Error('妖狐: 无数据')
-    },
-  },
-
-  // === 后端6: 长青直链 ===
   {
     name: '长青直链',
     fetch: async (songmid, quality) => {
-      const level = qualityToLevel(quality)
-      const res = await httpFetch('http://175.27.166.236/kgqq1/kw.php?type=mp3&id=' + songmid + '&level=' + level, {
-        method: 'GET', timeout: 8000,
+      const res = await httpFetch('http://175.27.166.236/wy1/wy.php?type=mp3&id=' + songmid + '&level=' + quality, {
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1413,45 +905,24 @@ const KW_BACKENDS = [
     },
   },
 
-  // === 后端7: 念心直链 ===
   {
-    name: '念心直链',
+    name: '聚合API',
     fetch: async (songmid, quality) => {
-      const level = qualityToLevel(quality)
-      const res = await httpFetch('https://music.nxinxz.com/kgqq/kw.php?id=' + songmid + '&level=' + level + '&type=mp3', {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
+      const res = await httpFetch('https://api.music.lerd.dpdns.org/wy', {
+        method: 'POST', timeout: 6000,
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
       })
       const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      throw new Error('念心直链: 无数据')
-    },
-  },
-
-  // === 后端8: 酷我官方接口（KuwoDES格式，surl=1） ===
-  {
-    name: '酷我官方',
-    fetch: async (songmid, quality, musicInfo) => {
-      const brMap = { '128k': '128kmp3', '192k': '128kmp3', '320k': '320kmp3', flac: '2000kflac', flac24bit: '4000kflac' }
-      const br = brMap[quality]
-      if (!br) throw new Error('酷我官方 不支持的音质')
-      let rid = musicInfo?.rid || ''
-      if (!rid && musicInfo?.musicrid) rid = String(musicInfo.musicrid).replace(/^MUSIC_/, '')
-      if (!rid) rid = songmid
-      // 使用KuwoDES格式，surl=1让服务器返回surl字段
-      const res = await httpFetch('https://mobi.kuwo.cn/mobi.s?f=web&rid=' + rid + '&br=' + br + '&source=jiakong&type=convert_url_with_sign&surl=1', {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36' },
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.data && d.data.surl) return d.data.surl
       if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('酷我官方: 无数据')
+      throw new Error('聚合API: 无数据')
     },
-  },
+  }
+]
 
-  // === 后端9: 酷我手机版（不同source标识） ===
+// ==================== 酷我音乐(kw) 后端接口列表（按优先级排列） ====================
+
+const KW_BACKENDS = [
   {
     name: '酷我手机版',
     fetch: async (songmid, quality) => {
@@ -1459,7 +930,7 @@ const KW_BACKENDS = [
       const br = brMap[quality]
       if (!br) throw new Error('酷我手机版 不支持的音质')
       const res = await httpFetch('https://nmobi.kuwo.cn/mobi.s?f=web&user=0&source=kwplayerhd_ar_4.3.0.8_tianbao_T1A_qirui.apk&type=convert_url_with_sign&rid=' + songmid + '&br=' + br, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36' },
       })
       const d = res.body
@@ -1468,8 +939,6 @@ const KW_BACKENDS = [
       throw new Error('酷我手机版: 无数据')
     },
   },
-
-  // === 后端10: 酷我车机版（不同source标识） ===
   {
     name: '酷我车机版',
     fetch: async (songmid, quality) => {
@@ -1477,7 +946,7 @@ const KW_BACKENDS = [
       const br = brMap[quality]
       if (!br) throw new Error('酷我车机版 不支持的音质')
       const res = await httpFetch('https://mobi.kuwo.cn/mobi.s?f=web&user=0&source=kwplayercar_ar_6.0.0.9_B_jiakong_vh.apk&type=convert_url_with_sign&br=' + br + '&sig=0&rid=' + songmid, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36' },
       })
       const d = res.body
@@ -1485,106 +954,19 @@ const KW_BACKENDS = [
       if (d && d.code === 200 && d.data && d.data.surl) return d.data.surl
       throw new Error('酷我车机版: 无数据')
     },
-  },
-
-  // === 后端11: 聆澜API ===
-  {
-    name: '聆澜',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://source.shiqianjiang.cn/api/music/url?source=kw&songId=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.url) return d.url
-      if (d && d.data && d.data.url) return d.data.url
-      throw new Error('聆澜: 无数据')
-    },
-  },
-
-  // === 后端12: HYWmusic API（白姬专用，103.79.184.97） ===
-  {
-    name: 'HYWmusic',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch(HYW_API_BASE + '/api/music/url?source=kw&songId=' + songmid + '&quality=' + quality + '&key=' + HYW_CARD_KEY, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Card-Key': HYW_CARD_KEY },
-      })
-      const d = res.body
-      if (d && d.code === 200) {
-        if (d.url) return d.url
-        if (d.data && d.data.url) return d.data.url
-      }
-      throw new Error('HYWmusic: 无数据')
-    },
-  },
-
-  // === 后端13: 溯音酷我（oiapi.net，搜索式API，不依赖songmid） ===
-  {
-    name: '溯音酷我',
-    fetch: async (songmid, quality, musicInfo) => {
-      const brMap = { '128k': '7', '192k': '5', '320k': '5', flac: '1', flac24bit: '1' }
-      const br = brMap[quality] || '7'
-      const name = musicInfo?.name || ''
-      const singer = musicInfo?.singer || ''
-      const keyword = name + (singer ? ' ' + singer : '')
-      if (!keyword) throw new Error('溯音酷我: 缺少歌曲名')
-      const res = await httpFetch('https://oiapi.net/api/Kuwo?msg=' + encodeURIComponent(keyword) + '&n=1&br=' + br, {
-        method: 'GET', timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      if (d && d.data && d.data.url) return d.data.url
-      if (d && d.url) return d.url
-      throw new Error('溯音酷我: 无数据')
-    },
-  },
-
-  // === 后端14: Hello World KW API（lxmusic.xn--fiqs8s，带SHA256签名） ===
-  {
-    name: 'HelloWorld',
-    fetch: async (songmid, quality, musicInfo) => {
-      const songId = musicInfo?.rid || musicInfo?.hash || musicInfo?.songmid || musicInfo?.id || songmid
-      if (!songId) throw new Error('HelloWorld: 找不到歌曲ID')
-      const requestPath = '/lxmusicv4/url/kw/' + songId + '/' + quality
-      const sign = helloWorldSign(requestPath)
-      const url = HELLO_WORLD_API_URL + requestPath + '?sign=' + sign
-      const res = await httpFetch(url, {
-        method: 'GET', timeout: 10000,
-        headers: {
-          'accept': 'application/json',
-          'x-request-key': HELLO_WORLD_API_KEY,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-      })
-      const d = res.body
-      if (d && (d.code === 0 || d.code === 200)) {
-        const musicUrl = d.data || d.url
-        if (musicUrl) return musicUrl
-      }
-      throw new Error('HelloWorld: ' + (d?.msg || '无数据'))
-    },
-  },
-
-  // === 后端xx: yunmge酷我（多码率选择，取自星澜） ===
-  { name: 'yunmge酷我', fetch: getYunmgeKw },
-
-  // === 后端xx: 星海酷我（通用聚合，取自星澜） ===
-  { name: '星海酷我', fetch: getXinghaiKw },
+  }
 ]
 
 // ==================== 酷狗音乐(kg) 后端接口列表（按优先级排列） ====================
 
 const KG_BACKENDS = [
-
-  // === 后端1: 长青海棠主后端（musicserver.haitangw.cc，取自长青SVIP音源二改版主API） ===
   {
     name: '长青海棠',
     fetch: async (songmid, quality, musicInfo) => {
       const level = KG_LEVEL_MAP[quality] || 'standard'
       const hash = musicInfo?.hash || musicInfo?.songmid || songmid
       const res = await httpFetch('https://musicserver.haitangw.cc/v1/music/resolve-url', {
-        method: 'POST', timeout: 10000,
+        method: 'POST', timeout: 6000,
         headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
         body: JSON.stringify({ source: 'kg', rid: hash, level: level }),
       })
@@ -1595,7 +977,6 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端2: 长青SVIP直链（取自Hei Music，直接构造URL，不发起HTTP请求） ===
   {
     name: '长青SVIP直链',
     fetch: async (songmid, quality, musicInfo) => {
@@ -1604,7 +985,7 @@ const KG_BACKENDS = [
       // 直接构造URL，该URL本身即为有效直链
       const url = 'https://music.haitangw.cc/kgqq1/kg.php?type=mp3&id=' + hash + '&level=' + level
       const res = await httpFetch(url, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1614,43 +995,6 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端3: 长青直链（175.27.166.236，备用） ===
-  {
-    name: '长青直链',
-    fetch: async (songmid, quality, musicInfo) => {
-      const level = KG_LEVEL_MAP[quality] || 'standard'
-      const hash = musicInfo?.hash || songmid
-      const res = await httpFetch('http://175.27.166.236/kgqq1/kg.php?type=mp3&id=' + hash + '&level=' + level, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      throw new Error('长青直链: 无数据')
-    },
-  },
-
-  // === 后端4: 长青POST（175.27.166.236 POST接口） ===
-  {
-    name: '长青POST',
-    fetch: async (songmid, quality, musicInfo) => {
-      const level = KG_LEVEL_MAP[quality] || 'standard'
-      const hash = musicInfo?.hash || songmid
-      const res = await httpFetch('http://175.27.166.236/kgqq1/kg.php', {
-        method: 'POST', timeout: 10000,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ source: 'kg', id: hash, level: level }),
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('长青POST: 无数据')
-    },
-  },
-
-  // === 后端5: 星海音乐源主后端（yy.zddyr.top） ===
   {
     name: '星海主后端',
     fetch: async (songmid, quality, musicInfo) => {
@@ -1658,7 +1002,7 @@ const KG_BACKENDS = [
       const albumId = musicInfo?.albumId || ''
       const mainHash = hash
       const res = await httpFetch('https://yy.zddyr.top/lx/api/?source=kg&quality=' + quality + '&songmid=' + (musicInfo?.songmid || songmid) + '&albumId=' + albumId + '&mainHash=' + mainHash + '&hash=' + hash, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1667,12 +1011,11 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端6: 星海音乐源备用后端（zrcdy） ===
   {
     name: '星海备后端',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://zrcdy.dpdns.org/lx/api/api.php?source=kg&songmid=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1681,53 +1024,11 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端7: 聚合API（lerd.dpdns.org） ===
-  {
-    name: '聚合API',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.music.lerd.dpdns.org/kg', {
-        method: 'POST', timeout: 10000,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('聚合API: 无数据')
-    },
-  },
-
-  // === 后端8: Hello World KG API（lxmusic.xn--fiqs8s，带SHA256签名） ===
-  {
-    name: 'HelloWorld',
-    fetch: async (songmid, quality, musicInfo) => {
-      const songId = musicInfo?.hash || musicInfo?.songmid || musicInfo?.id || songmid
-      if (!songId) throw new Error('HelloWorld: 找不到歌曲ID')
-      const requestPath = '/lxmusicv4/url/kg/' + songId + '/' + quality
-      const sign = helloWorldSign(requestPath)
-      const url = HELLO_WORLD_API_URL + requestPath + '?sign=' + sign
-      const res = await httpFetch(url, {
-        method: 'GET', timeout: 10000,
-        headers: {
-          'accept': 'application/json',
-          'x-request-key': HELLO_WORLD_API_KEY,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-      })
-      const d = res.body
-      if (d && (d.code === 0 || d.code === 200)) {
-        const musicUrl = d.data || d.url
-        if (musicUrl) return musicUrl
-      }
-      throw new Error('HelloWorld: ' + (d?.msg || '无数据'))
-    },
-  },
-
-  // === 后端9: 妖狐API ===
   {
     name: '妖狐',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://api.yaohud.cn/api/music/kgvip?id=' + songmid + '&level=' + quality, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1737,13 +1038,12 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端10: 念心KG ===
   {
     name: '念心KG',
     fetch: async (songmid, quality) => {
       const level = KG_LEVEL_MAP[quality] || 'standard'
       const res = await httpFetch('https://music.nxinxz.com/kgqq/kg.php?id=' + songmid + '&level=' + level + '&type=mp3', {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1753,12 +1053,11 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端11: ChKsZ 聚合API ===
   {
     name: 'ChKsZ',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://api.chksz.top/api', {
-        method: 'POST', timeout: 8000,
+        method: 'POST', timeout: 5000,
         headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
         body: JSON.stringify({ source: 'kg', songmid, quality }),
       })
@@ -1768,14 +1067,13 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端12: 海棠API（使用KG_LEVEL_MAP修正master音质） ===
   {
     name: '海棠API',
     fetch: async (songmid, quality, musicInfo) => {
       const level = KG_LEVEL_MAP[quality] || 'standard'
       const hash = musicInfo?.hash || (musicInfo?._types?.[quality]?.hash) || songmid
       const res = await httpFetch('https://musicapi.haitangw.net/kgqq/kg.php?type=json&id=' + hash + '&level=' + level, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1785,14 +1083,13 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端13: 酷狗官方API（直接调用酷狗官方接口） ===
   {
     name: '酷狗官方',
     fetch: async (songmid, quality, musicInfo) => {
       const hash = musicInfo?.hash || songmid
       const albumId = musicInfo?.albumId || ''
       const res = await httpFetch('https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash=' + hash + '&platid=4&album_id=' + albumId + '&mid=00000000000000000000000000000000', {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://www.kugou.com/' },
       })
       const d = res.body
@@ -1802,12 +1099,11 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端14: 聆澜API ===
   {
     name: '聆澜',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://source.shiqianjiang.cn/api/music/url?source=kg&songId=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1817,12 +1113,11 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端15: HYWmusic API（白姬专用，103.79.184.97） ===
   {
     name: 'HYWmusic',
     fetch: async (songmid, quality) => {
       const res = await httpFetch(HYW_API_BASE + '/api/music/url?source=kg&songId=' + songmid + '&quality=' + quality + '&key=' + HYW_CARD_KEY, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Card-Key': HYW_CARD_KEY },
       })
       const d = res.body
@@ -1834,14 +1129,13 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端16: GD Studio API ===
   {
     name: 'GDStudio',
     fetch: async (songmid, quality) => {
       const brMap = { '128k': '128', '320k': '320', flac: '740', flac24bit: '999', hires: '999' }
       const br = brMap[quality] || '128'
       const res = await httpFetch('https://music-api.gdstudio.xyz/api.php?types=url&source=kg&id=' + songmid + '&br=' + br, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1850,23 +1144,52 @@ const KG_BACKENDS = [
     },
   },
 
-  // === 后端xx: 星海酷狗（通用聚合，取自星澜） ===
-  { name: '星海酷狗', fetch: getXinghaiKg },
-
-  // === 后端xx: 念心酷狗（多码率，取自星澜） ===
   { name: '念心酷狗', fetch: getNianxinKg },
+
+  {
+    name: 'animemusic',
+    fetch: async (songmid, quality, musicInfo) => getAnimemusic('kg', songmid, quality, musicInfo),
+  },
+
+  {
+    name: '长青直链',
+    fetch: async (songmid, quality, musicInfo) => {
+      const level = KG_LEVEL_MAP[quality] || 'standard'
+      const hash = musicInfo?.hash || songmid
+      const res = await httpFetch('http://175.27.166.236/kgqq1/kg.php?type=mp3&id=' + hash + '&level=' + level, {
+        method: 'GET', timeout: 5000,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      })
+      const d = res.body
+      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
+      if (d && d.url) return d.url
+      throw new Error('长青直链: 无数据')
+    },
+  },
+
+  {
+    name: '聚合API',
+    fetch: async (songmid, quality) => {
+      const res = await httpFetch('https://api.music.lerd.dpdns.org/kg', {
+        method: 'POST', timeout: 6000,
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
+      })
+      const d = res.body
+      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
+      throw new Error('聚合API: 无数据')
+    },
+  }
 ]
 
 // ==================== 咪咕音乐(mg) 后端接口列表（按优先级排列） ====================
 
 const MG_BACKENDS = [
-
-  // === 后端1: 星海音乐源主后端（yy.zddyr.top） ===
   {
     name: '星海主后端',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://yy.zddyr.top/lx/api/?source=migu&songmid=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1875,12 +1198,11 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端2: 星海音乐源备用后端（zrcdy） ===
   {
     name: '星海备后端',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://zrcdy.dpdns.org/lx/api/api.php?source=migu&songmid=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1889,29 +1211,13 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端3: 聚合API（lerd.dpdns.org） ===
-  {
-    name: '聚合API',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://api.music.lerd.dpdns.org/mg', {
-        method: 'POST', timeout: 10000,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
-      throw new Error('聚合API: 无数据')
-    },
-  },
-
-  // === 后端4: GD Studio API ===
   {
     name: 'GDStudio',
     fetch: async (songmid, quality) => {
       const brMap = { '128k': '128', '320k': '320', flac: '1000' }
       const br = brMap[quality] || '128'
       const res = await httpFetch('https://music-api.gdstudio.xyz/api.php?types=url&source=migu&id=' + songmid + '&br=' + br, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -1920,13 +1226,12 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端5: Migu直接源（Hei Music） ===
   {
     name: 'Migu直接源',
     fetch: async (songmid, quality) => {
       const level = qualityToLevel(quality)
       const res = await httpFetch('https://music.migu.cn/v3/api/music/audioPlayer/getPlayInfo?copyrightId=' + encodeURIComponent(String(songmid)) + '&level=' + level, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Referer: 'https://music.migu.cn/' },
       })
       const d = res.body
@@ -1937,14 +1242,13 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端6: Migu API（Hei Music） ===
   {
     name: 'Migu API',
     fetch: async (songmid, quality) => {
       const levelMap = { '128k': 'PQ', '320k': 'HQ', flac: 'SQ', flac24bit: 'ZQ' }
       const level = levelMap[quality] || 'HQ'
       const res = await httpFetch('https://app.c.nf.migu.cn/MIGUM2.0/strategy/listen-url/v2.2?copyrightId=' + encodeURIComponent(String(songmid)) + '&quality=' + level, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36', Referer: 'https://app.c.nf.migu.cn/' },
       })
       const d = res.body
@@ -1955,29 +1259,12 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端7: 星海后端（Hei Music xhbackend） ===
-  {
-    name: '星海后端',
-    fetch: async (songmid, quality) => {
-      const level = qualityToLevel(quality)
-      const res = await httpFetch('https://api.xinghai-backend.cn/migu?id=' + encodeURIComponent(String(songmid)) + '&quality=' + level, {
-        method: 'GET', timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      if (d && d.code === 200 && d.url) return d.url
-      if (d && d.data && d.data.url) return d.data.url
-      throw new Error('星海后端: 无数据')
-    },
-  },
-
-  // === 后端8: 长青直链（haitangw） ===
   {
     name: '长青直链',
     fetch: async (songmid, quality) => {
       const level = qualityToLevel(quality)
       const res = await httpFetch('https://music.haitangw.cc/musicapi/mg.php?type=mp3&id=' + encodeURIComponent(String(songmid)) + '&level=' + level, {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -1987,13 +1274,12 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端9: 念心直链 ===
   {
     name: '念心直链',
     fetch: async (songmid, quality) => {
       const level = qualityToLevel(quality)
       const res = await httpFetch('http://music.nxinxz.com/mg.php?id=' + encodeURIComponent(String(songmid)) + '&level=' + level + '&type=mp3', {
-        method: 'GET', timeout: 8000,
+        method: 'GET', timeout: 5000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
       })
       const d = res.body
@@ -2003,12 +1289,11 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端10: 聆澜API ===
   {
     name: '聆澜',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://source.shiqianjiang.cn/api/music/url?source=mg&songId=' + songmid + '&quality=' + quality, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
       })
       const d = res.body
@@ -2018,12 +1303,11 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端11: HYWmusic API（白姬专用，103.79.184.97） ===
   {
     name: 'HYWmusic',
     fetch: async (songmid, quality) => {
       const res = await httpFetch(HYW_API_BASE + '/api/music/url?source=mg&songId=' + songmid + '&quality=' + quality + '&key=' + HYW_CARD_KEY, {
-        method: 'GET', timeout: 10000,
+        method: 'GET', timeout: 6000,
         headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Card-Key': HYW_CARD_KEY },
       })
       const d = res.body
@@ -2035,8 +1319,19 @@ const MG_BACKENDS = [
     },
   },
 
-  // === 后端xx: 星海咪咕（通用聚合，取自星澜） ===
-  { name: '星海咪咕', fetch: getXinghaiMg },
+  {
+    name: '聚合API',
+    fetch: async (songmid, quality) => {
+      const res = await httpFetch('https://api.music.lerd.dpdns.org/mg', {
+        method: 'POST', timeout: 6000,
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        body: JSON.stringify({ musicInfo: { songmid }, type: quality }),
+      })
+      const d = res.body
+      if (d && d.code === 200 && d.data && d.data.url) return d.data.url
+      throw new Error('聚合API: 无数据')
+    },
+  }
 ]
 
 // ==================== 获取音乐URL（优先级窗口并发，语义与原串行一致） ====================
@@ -2062,13 +1357,18 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
 
   if (!backends) throw new Error('未知音源: ' + source)
 
-  // 酷我音乐：高音质（atmos/atmos_plus/master）走流媒体直链，普通音质走星海等其他后端（保持原版索引逻辑不变）
+  // 酷我音乐：高音质（atmos/atmos_plus/master）走流媒体直链，普通音质走星海等其他后端
   if (source === 'kw') {
     const highQuality = ['atmos', 'atmos_plus', 'master']
     if (highQuality.includes(quality)) {
       backends = [backends[0]]
     } else {
-      backends = backends.filter((_, i) => i !== 0)
+      // ★ 2026-10-20：原逻辑剔除索引 0（星海主后端）。但星海主后端恰恰是 kw
+      //   唯一能按 rid 返回**完整无损**直链的后端（实测 source=kw 返回 fLaC 直链，
+      //   Range 206、1.0~1.8MB、按 rid 区分），剔除它等于砍掉 kw 的主力路径。
+      //   同时「酷我官方」已被停用（恒返回固定广告片段），原先靠它"成功"来短路
+      //   降级的副作用消失。改为**不再剔除任何后端**，让星海主后端与流媒体
+      //   一起参与优先级竞价。
     }
   }
 
