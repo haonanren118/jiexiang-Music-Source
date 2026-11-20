@@ -1,7 +1,7 @@
 /*!
  * @name 杰翔聚合音源
- * @description 全平台支持flac，wy，qq，kg支持母带；kw 仅保留官方后端，且最高 320k mp3（官方无损档文件坏帧）
- * @version 2.4.1
+ * @description 全平台支持flac，wy，qq，kg支持母带；kw 仅保留官方后端，且最高 320k mp3（官方无损档文件坏帧）；kg 无损档同样锁 320k mp3
+ * @version 2.4.2
  * @author https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi
  * @homepage https://github.com/baiji6/molanyinyueyuan
  * @license MIT
@@ -17,6 +17,10 @@
       code / decode_frame failed，8/8 全坏），播放到坏帧即中断，外网弱链路更易失败：
       kw 音质声明与档位映射统一锁定 128k/192k/320k mp3，不再请求无损档；
       QQ/网易/酷狗/咪咕的高音质不受影响
+    6.【2.4.2】kg 无损档同源问题：flac 档实测返回 31,633,244 字节的 audio/x-flac，
+      但整文件坏帧不可播（与 kw 一致）；同一 hash 走 320k 返回 10,792,943 字节 audio/mpeg
+      且 ffmpeg 全轨解码零错误。kg 音质声明收敛为 128k/320k，
+      flac/flac24bit/hires/atmos/atmos_plus/master 统一降级到 320k mp3
  */
 
 
@@ -53,12 +57,12 @@ const HAS_WY_COOKIE = !!WY_COOKIE
 // ==================== 音质列表（参照ikun音源格式） ====================
 
 const MUSIC_QUALITY = JSON.parse(HAS_TX_COOKIE && HAS_WY_COOKIE
-  ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
+  ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k"],"kg":["128k","320k"],"mg":["128k","320k","flac"]}'
   : HAS_TX_COOKIE
-    ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
+    ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k"],"kg":["128k","320k"],"mg":["128k","320k","flac"]}'
     : HAS_WY_COOKIE
-      ? '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
-      : '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
+      ? '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k"],"kg":["128k","320k"],"mg":["128k","320k","flac"]}'
+      : '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k"],"kg":["128k","320k"],"mg":["128k","320k","flac"]}'
 )
 
 const MUSIC_SOURCE = Object.keys(MUSIC_QUALITY)
@@ -312,6 +316,16 @@ const KG_LEVEL_MAP = {
   atmos: 'atmos',
   atmos_plus: 'atmos',
   master: 'clear',
+}
+
+// 2.4.2：kg 无损档统一降级到 320k mp3（flac 档文件全轨坏帧，实测不可播）
+const KG_QUALITY_FALLBACK = {
+  flac: '320k',
+  flac24bit: '320k',
+  hires: '320k',
+  atmos: '320k',
+  atmos_plus: '320k',
+  master: '320k',
 }
 
 // ==================== 酷我流媒体音质Level映射（175.27.166.236:8928 专用） ====================
@@ -967,6 +981,12 @@ const KW_BACKENDS = [
 // ==================== 酷狗音乐(kg) 后端接口列表（按优先级排列） ====================
 
 const KG_BACKENDS = [
+  // 2.4.2：animemusic 是 kg 目前唯一稳定出链的后端（实测先于其余全部返回），
+  // 提到首位后不再等前面一串失效后端逐个超时，解析耗时从 7–12 秒降到 1 秒级。
+  {
+    name: 'animemusic',
+    fetch: async (songmid, quality, musicInfo) => getAnimemusic('kg', songmid, quality, musicInfo),
+  },
   {
     name: '长青海棠',
     fetch: async (songmid, quality, musicInfo) => {
@@ -1152,11 +1172,6 @@ const KG_BACKENDS = [
   },
 
   { name: '念心酷狗', fetch: getNianxinKg },
-
-  {
-    name: 'animemusic',
-    fetch: async (songmid, quality, musicInfo) => getAnimemusic('kg', songmid, quality, musicInfo),
-  },
 
   {
     name: '长青直链',
@@ -1363,6 +1378,10 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
   }[source]
 
   if (!backends) throw new Error('未知音源: ' + source)
+
+  // 2.4.2：kg 无损档（flac/hires/atmos/master）实测文件坏帧不可播，
+  // 与 kw 同策略在解析前统一降级到 320k mp3；128k/320k 原样保留。
+  if (source === 'kg' && KG_QUALITY_FALLBACK[quality]) quality = KG_QUALITY_FALLBACK[quality]
 
   // 酷我音乐：高音质（atmos/atmos_plus/master）走流媒体直链，普通音质走星海等其他后端
   if (source === 'kw') {

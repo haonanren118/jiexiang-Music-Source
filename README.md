@@ -1,13 +1,13 @@
 # 🎵 杰翔音乐源 (jiexiang-Music Source)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.4.1-brightgreen" alt="version">
+  <img src="https://img.shields.io/badge/version-2.4.2-brightgreen" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
   <img src="https://img.shields.io/badge/platform-LX%20Music-orange" alt="platform">
   <img src="https://img.shields.io/github/stars/haonanren118/jiexiang-Music-Source?style=social" alt="stars">
 </p>
 
-**杰翔音乐源**是专为 **洛雪音乐（LX Music）** 打造的超聚合自定义音源，融合 **QQ、网易云、酷我、酷狗、咪咕** 五大平台 **90+ 个后端**，支持 flac，其中 QQ/网易云/酷我支持母带与全景声。
+**杰翔音乐源**是专为 **洛雪音乐（LX Music）** 打造的超聚合自定义音源，融合 **QQ、网易云、酷我、酷狗、咪咕** 五大平台 **90+ 个后端**，支持 flac，其中 QQ/网易云支持母带与全景声。
 
 本项目基于 [墨澜音乐源](https://github.com/baiji6/molanyinyueyuan)（作者：白姬9527，MIT 许可）二改。`杰翔音乐源.js` 在**各后端请求/签名逻辑与原版完全一致**的基础上，仅对调度层做了一处**安全加速（优先级窗口并发）**——不改变「最终返回哪个 URL」的语义，因此通过洛雪（LX Music）对 `musicUrl` 的校验与原版行为一致。详见下方「⚡ 安全加速」。
 
@@ -48,14 +48,14 @@
 | QQ音乐 (tx) | 128k, 320k, flac, flac24bit, hires, atmos, atmos_plus, master | 128k, 320k, flac |
 | 网易云音乐 (wy) | 128k, 320k, flac, flac24bit, hires, atmos, master | 128k, 320k, flac |
 | 酷我音乐 (kw) | 128k, 192k, 320k | 128k, 192k, 320k |
-| 酷狗音乐 (kg) | 128k, 320k, flac, hires, atmos, master | 128k, 320k, flac, hires, atmos, master |
+| 酷狗音乐 (kg) | 128k, 320k | 128k, 320k |
 | 咪咕音乐 (mg) | 128k, 320k, flac | 128k, 320k, flac |
 
 💡 高音质（母带、全景声）需对应平台会员 Cookie，详见下方「🔑 Cookie 配置」。
 
 ---
 
-## 📌 接入地址（v2.4.1）
+## 📌 接入地址（v2.4.2）
 
 **在线导入**（洛雪「自定义源管理 → 在线导入」直接粘贴）：
 
@@ -63,8 +63,8 @@
 https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7%BF%94%E9%9F%B3%E4%B9%90%E6%BA%90.js
 ```
 
-- 历史版本：`历史版本/杰翔音乐源-2.4.0.js`、`历史版本/杰翔音乐源-2.3.0.js`
-- 说明：kw 仅保留酷我官方手机版/车机版后端，且最高输出 320k mp3
+- 历史版本：`历史版本/杰翔音乐源-2.4.1.js`、`历史版本/杰翔音乐源-2.4.0.js`、`历史版本/杰翔音乐源-2.3.0.js`
+- 说明：kw 仅保留酷我官方手机版/车机版后端，最高输出 320k mp3；kg 最高输出 320k mp3（`animemusic` 置于首位）
 - 提示：请使用上面这条 **URL 编码后** 的地址。未编码的中文路径在浏览器、curl、Node 下可用，但 Python 及部分脚本会直接报错
 
 ---
@@ -131,6 +131,14 @@ curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7
 ---
 
 ## 📈 更新日志
+
+### v2.4.2（2026-11-20）📌 正式发行
+
+- 修复酷狗（kg）无损档无法播放：`flac` 档实测返回 31,633,244 字节的 `audio/x-flac`，但整文件含坏帧，`ffmpeg` 全轨解码报错、无法播放（与 kw 旧问题同源）。同一 hash 走 `320k` 返回 10,792,943 字节 `audio/mpeg`，解码零错误。
+- kg 音质声明收敛为 **128k / 320k**；`flac`、`flac24bit`、`hires`、`atmos`、`atmos_plus`、`master` 在解析前统一降级到 **320k mp3**。
+- kg 后端顺序调整：`animemusic` 提到首位（当前唯一稳定出链的后端），解析耗时从实测 6.93 / 7.64 / 11.64 秒降至 5.02 / 3.79 / 5.03 / 2.67 秒，避免逼近 12 秒超时上限。
+- 回归验证：kw 未受影响（320k mp3、10,797,030 字节、269.87 秒、解码零错误）。
+- 上一版本归档至 `历史版本/杰翔音乐源-2.4.1.js`，可随时回滚。
 
 ### v2.4.1（2026-11-20）📌 正式发行
 
@@ -207,7 +215,7 @@ curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7
 
 ---
 
-杰翔音乐源 v2.4.1 —— 汇聚百川，只为每一首歌流畅抵达。
+杰翔音乐源 v2.4.2 —— 汇聚百川，只为每一首歌流畅抵达。
 如果你喜欢这个项目，别忘了点 ⭐ **Star** 支持我们，并欢迎进群一起交流！🎵
 
 *免责声明：本项目仅用于学习与技术研究，请遵守相关平台服务条款与当地法律法规，勿用于商业或侵权用途。*
