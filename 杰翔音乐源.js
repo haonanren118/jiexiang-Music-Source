@@ -1,11 +1,11 @@
 /*!
  * @name 杰翔聚合音源
- * @description 全平台支持flac，wy，qq，kw，kg支持母带；kw 仅保留官方后端
- * @version 2.4.0
+ * @description 全平台支持flac，wy，qq，kg支持母带；kw 仅保留官方后端，且最高 320k mp3（官方无损档文件坏帧）
+ * @version 2.4.1
  * @author https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi
  * @homepage https://github.com/baiji6/molanyinyueyuan
  * @license MIT
- * @update 2026-11-19
+ * @update 2026-11-20
  * @changelog
     1.修复wy音源
     2.新增QQ越权
@@ -13,6 +13,10 @@
       非母带档位不再剔除星海主后端（kw 可播率 32% → 100%）
     4.【2.4.0】kw 仅保留官方手机版/车机版后端：移除 14 个长期失效的第三方后端，
       修复飙升榜大面积「无法播放」；官方接口实测 0.1–0.3 秒出链
+    5.【2.4.1】kw 官方无损档（2000kflac）实测返回文件含坏帧（ffmpeg 报 invalid sync
+      code / decode_frame failed，8/8 全坏），播放到坏帧即中断，外网弱链路更易失败：
+      kw 音质声明与档位映射统一锁定 128k/192k/320k mp3，不再请求无损档；
+      QQ/网易/酷狗/咪咕的高音质不受影响
  */
 
 
@@ -49,12 +53,12 @@ const HAS_WY_COOKIE = !!WY_COOKIE
 // ==================== 音质列表（参照ikun音源格式） ====================
 
 const MUSIC_QUALITY = JSON.parse(HAS_TX_COOKIE && HAS_WY_COOKIE
-  ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k","flac","flac24bit"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
+  ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
   : HAS_TX_COOKIE
-    ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k","flac","flac24bit"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
+    ? '{"tx":["128k","320k","flac","flac24bit","hires","atmos","atmos_plus","master"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
     : HAS_WY_COOKIE
-      ? '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k","flac","flac24bit"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
-      : '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k","flac","flac24bit"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
+      ? '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac","flac24bit","hires","atmos","master"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
+      : '{"tx":["128k","320k","flac"],"wy":["128k","320k","flac"],"kw":["128k","192k","320k"],"kg":["128k","320k","flac","hires","atmos","master"],"mg":["128k","320k","flac"]}'
 )
 
 const MUSIC_SOURCE = Object.keys(MUSIC_QUALITY)
@@ -926,7 +930,9 @@ const KW_BACKENDS = [
   {
     name: '酷我手机版',
     fetch: async (songmid, quality) => {
-      const brMap = { '128k': '128kmp3', '192k': '128kmp3', '320k': '320kmp3', flac: '2000kflac', flac24bit: '4000kflac' }
+      // 2.4.1：官方 2000kflac/4000kflac 档返回的文件含坏帧（ffmpeg invalid sync code），
+      // 一律降级到 320kmp3，避免把坏 FLAC 交给客户端
+      const brMap = { '128k': '128kmp3', '192k': '128kmp3', '320k': '320kmp3', flac: '320kmp3', flac24bit: '320kmp3', hires: '320kmp3', atmos: '320kmp3', atmos_plus: '320kmp3', master: '320kmp3' }
       const br = brMap[quality]
       if (!br) throw new Error('酷我手机版 不支持的音质')
       const res = await httpFetch('https://nmobi.kuwo.cn/mobi.s?f=web&user=0&source=kwplayerhd_ar_4.3.0.8_tianbao_T1A_qirui.apk&type=convert_url_with_sign&rid=' + songmid + '&br=' + br, {
@@ -942,7 +948,8 @@ const KW_BACKENDS = [
   {
     name: '酷我车机版',
     fetch: async (songmid, quality) => {
-      const brMap = { '128k': '128kmp3', '192k': '128kmp3', '320k': '320kmp3', flac: '2000kflac', flac24bit: '4000kflac' }
+      // 2.4.1：同手机版，无损档返回坏帧文件，统一降级到 320kmp3
+      const brMap = { '128k': '128kmp3', '192k': '128kmp3', '320k': '320kmp3', flac: '320kmp3', flac24bit: '320kmp3', hires: '320kmp3', atmos: '320kmp3', atmos_plus: '320kmp3', master: '320kmp3' }
       const br = brMap[quality]
       if (!br) throw new Error('酷我车机版 不支持的音质')
       const res = await httpFetch('https://mobi.kuwo.cn/mobi.s?f=web&user=0&source=kwplayercar_ar_6.0.0.9_B_jiakong_vh.apk&type=convert_url_with_sign&br=' + br + '&sig=0&rid=' + songmid, {

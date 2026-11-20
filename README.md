@@ -1,7 +1,7 @@
 # 🎵 杰翔音乐源 (jiexiang-Music Source)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.4.0-brightgreen" alt="version">
+  <img src="https://img.shields.io/badge/version-2.4.1-brightgreen" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
   <img src="https://img.shields.io/badge/platform-LX%20Music-orange" alt="platform">
   <img src="https://img.shields.io/github/stars/haonanren118/jiexiang-Music-Source?style=social" alt="stars">
@@ -47,7 +47,7 @@
 |------|--------------------|--------------------|
 | QQ音乐 (tx) | 128k, 320k, flac, flac24bit, hires, atmos, atmos_plus, master | 128k, 320k, flac |
 | 网易云音乐 (wy) | 128k, 320k, flac, flac24bit, hires, atmos, master | 128k, 320k, flac |
-| 酷我音乐 (kw) | 128k, 192k, 320k, flac, flac24bit | 128k, 192k, 320k, flac, flac24bit |
+| 酷我音乐 (kw) | 128k, 192k, 320k | 128k, 192k, 320k |
 | 酷狗音乐 (kg) | 128k, 320k, flac, hires, atmos, master | 128k, 320k, flac, hires, atmos, master |
 | 咪咕音乐 (mg) | 128k, 320k, flac | 128k, 320k, flac |
 
@@ -55,7 +55,7 @@
 
 ---
 
-## 📌 接入地址（v2.4.0）
+## 📌 接入地址（v2.4.1）
 
 **在线导入**（洛雪「自定义源管理 → 在线导入」直接粘贴）：
 
@@ -63,8 +63,8 @@
 https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7%BF%94%E9%9F%B3%E4%B9%90%E6%BA%90.js
 ```
 
-- 历史版本：`历史版本/杰翔音乐源-2.3.0.js`
-- 说明：kw 仅保留酷我官方手机版/车机版后端
+- 历史版本：`历史版本/杰翔音乐源-2.4.0.js`、`历史版本/杰翔音乐源-2.3.0.js`
+- 说明：kw 仅保留酷我官方手机版/车机版后端，且最高输出 320k mp3
 - 提示：请使用上面这条 **URL 编码后** 的地址。未编码的中文路径在浏览器、curl、Node 下可用，但 Python 及部分脚本会直接报错
 
 ---
@@ -122,7 +122,7 @@ curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7
 |------|--------|------|
 | QQ音乐 (tx) | 26 | 含 QQ官方、星海、溯音、xcvts、vkeys、柳云、317ak、lxmusic88、HYWmusic 公益、QQ越权、ygking 等 |
 | 网易云音乐 (wy) | 20 | 含 ikun、网易云官方(eapi)、ChKsZ、笒鬼鬼、toubiec、星海、残像(母带) 等 |
-| 酷我音乐 (kw) | 2 | 仅保留酷我官方手机版/车机版（其余第三方后端长期失效，已移除） |
+| 酷我音乐 (kw) | 2 | 仅保留酷我官方手机版/车机版；官方无损档文件含坏帧，故最高输出 320k mp3 |
 | 酷狗音乐 (kg) | 18 | 含长青海棠(主API)、长青SVIP、星海、HelloWorld、妖狐、念心、海棠API、酷狗官方 等 |
 | 咪咕音乐 (mg) | 12 | 含星海、聚合API、Migu 直接源/API、长青、念心、聆澜、HYWmusic 等 |
 
@@ -131,6 +131,13 @@ curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7
 ---
 
 ## 📈 更新日志
+
+### v2.4.1（2026-11-20）📌 正式发行
+
+- 修复酷我（kw）大量歌曲无法播放：官方无损档（`2000kflac`）返回的文件内含坏帧，ffmpeg 全轨解码报 `invalid sync code` / `decode_frame failed`（实测 8/8 首全坏，NAS 后台校验 32/32 全失败），播放到坏帧处即中断。
+- kw 音质声明与档位映射统一锁定 **128k / 192k / 320k mp3**，不再请求官方无损档；实测 320k 档 8/8 首解码零错误。
+- QQ、网易、酷狗、咪咕的高音质与母带链路不受影响。
+- 上一版本归档至 `历史版本/杰翔音乐源-2.4.0.js`，可随时回滚。
 
 ### v2.4.0（2026-11-19）📌 正式发行
 
@@ -200,7 +207,7 @@ curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7
 
 ---
 
-杰翔音乐源 v2.4.0 —— 汇聚百川，只为每一首歌流畅抵达。
+杰翔音乐源 v2.4.1 —— 汇聚百川，只为每一首歌流畅抵达。
 如果你喜欢这个项目，别忘了点 ⭐ **Star** 支持我们，并欢迎进群一起交流！🎵
 
 *免责声明：本项目仅用于学习与技术研究，请遵守相关平台服务条款与当地法律法规，勿用于商业或侵权用途。*
