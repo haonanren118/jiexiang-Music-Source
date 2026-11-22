@@ -1,7 +1,7 @@
 # 🎵 杰翔音乐源 (jiexiang-Music Source)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.4.2-brightgreen" alt="version">
+  <img src="https://img.shields.io/badge/version-2.4.3-brightgreen" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
   <img src="https://img.shields.io/badge/platform-LX%20Music-orange" alt="platform">
   <img src="https://img.shields.io/github/stars/haonanren118/jiexiang-Music-Source?style=social" alt="stars">
@@ -55,7 +55,7 @@
 
 ---
 
-## 📌 接入地址（v2.4.2）
+## 📌 接入地址（v2.4.3 正式发行）
 
 **在线导入**（洛雪「自定义源管理 → 在线导入」直接粘贴）：
 
@@ -63,8 +63,10 @@
 https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7%BF%94%E9%9F%B3%E4%B9%90%E6%BA%90.js
 ```
 
-- 历史版本：`历史版本/杰翔音乐源-2.4.1.js`、`历史版本/杰翔音乐源-2.4.0.js`、`历史版本/杰翔音乐源-2.3.0.js`
+- 历史版本：`历史版本/杰翔音乐源-2.4.2.js`、`历史版本/杰翔音乐源-2.4.1.js`、`历史版本/杰翔音乐源-2.3.0.js`
 - 说明：kw 仅保留酷我官方手机版/车机版后端，最高输出 320k mp3；kg 最高输出 320k mp3（`animemusic` 置于首位）
+- 兼容：上一轮并存入口 `杰翔音乐源-2.4.3.js` 内容与主线完全一致，保留该文件仅为不影响已导入用户，后续版本不再更新它
+- 回滚：把导入地址末尾的 `杰翔音乐源.js` 换成 `历史版本/杰翔音乐源-2.4.2.js`（URL 编码）即可退回 2.4.2
 - 提示：请使用上面这条 **URL 编码后** 的地址。未编码的中文路径在浏览器、curl、Node 下可用，但 Python 及部分脚本会直接报错
 
 ---
@@ -118,19 +120,33 @@ curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7
 
 ## 📋 后端数量一览
 
-| 平台 | 后端数 | 说明 |
-|------|--------|------|
-| QQ音乐 (tx) | 26 | 含 QQ官方、星海、溯音、xcvts、vkeys、柳云、317ak、lxmusic88、HYWmusic 公益、QQ越权、ygking 等 |
-| 网易云音乐 (wy) | 20 | 含 ikun、网易云官方(eapi)、ChKsZ、笒鬼鬼、toubiec、星海、残像(母带) 等 |
-| 酷我音乐 (kw) | 2 | 仅保留酷我官方手机版/车机版；官方无损档文件含坏帧，故最高输出 320k mp3 |
-| 酷狗音乐 (kg) | 18 | 含长青海棠(主API)、长青SVIP、星海、HelloWorld、妖狐、念心、海棠API、酷狗官方 等 |
-| 咪咕音乐 (mg) | 12 | 含星海、聚合API、Migu 直接源/API、长青、念心、聆澜、HYWmusic 等 |
+| 平台 | v2.4.3 后端数 | 本次实测（2026-11-22）出链 | 说明 |
+|------|--------:|:--:|------|
+| QQ音乐 (tx) | 11 | 7 | 出链：玉宁熙、收集聚合、tang、晴亮、回响、vkeys备用、长青直连；`QQ官方` 需配 `@tx_cookie`；`vkeys` 主端点当前 503、`Huibq` 已停服、`animemusic` 需 API Key |
+| 网易云音乐 (wy) | 20 | — | 含 ikun、网易云官方(eapi)、ChKsZ、笒鬼鬼、toubiec、星海、残像(母带) 等（本次未逐条实测） |
+| 酷我音乐 (kw) | 2 | — | 仅保留酷我官方手机版/车机版；官方无损档文件含坏帧，故最高输出 320k mp3 |
+| 酷狗音乐 (kg) | 17 | — | 含长青海棠(主API)、长青SVIP、星海、HelloWorld、妖狐、念心、海棠API、酷狗官方 等 |
+| 咪咕音乐 (mg) | 11 | 1 | 仅 `溯音咪咕`（128k）出链；星海主/备、xinghai-backend、长青、念心、聆澜、GDStudio、Migu 官方 web/App、聚合API、HYW 当前均失败 |
 
-> 实际数量随版本迭代可能增加，请以代码 `TX_BACKENDS / WY_BACKENDS / KW_BACKENDS / KG_BACKENDS / MG_BACKENDS` 为准。
+> 上表为 **v2.4.3** 数值，与代码常量 `TX_BACKENDS / WY_BACKENDS / KW_BACKENDS / KG_BACKENDS / MG_BACKENDS` 一一对应。上一版 v2.4.2 实际为 TX 7 / WY 20 / KW 2 / KG 17 / MG 10（更早表格里的 26 / 20 / 2 / 18 / 12 是 2.3.0 的旧数据，已失效）。
 
 ---
 
 ## 📈 更新日志
+
+### v2.4.3（2026-11-22）📌 正式发行
+
+- 发行形式：`杰翔音乐源.js` 已更新为 2.4.3，2.4.2 原文件完整归档至 `历史版本/杰翔音乐源-2.4.2.js`（未丢失、未改写，可随时回滚）。上一轮并存文件 `杰翔音乐源-2.4.3.js` 与主线内容一致，保留仅为兼容已导入用户。
+- 按 2026-11-22 实测补充可用后端，**只新增后端、未改调度层**（窗口并发、优先级竞价、返回语义全部不动）。
+- QQ 新增 4 条，统一插在 `vkeys` 之前，避免只回试听片段的 `vkeys` 抢跑：
+  - `晴亮(QQ)`：`music.lzmhhh.com`，320k mp3，实测 132ms
+  - `回响(QQ)`：`api.xunhuisi.store`，整曲 m4a，实测 1.29s
+  - `vkeys备用`：`api.vkeys.cn/music/tencent/song/link`，flac，实测 351ms
+  - `长青直连(QQ)`：`175.27.166.236/kgqq1`，流式 `audio/mpeg`，支持 Range；脚本内先做 1KB Range 探测再交给洛雪，避免无效 ID 挂到超时
+- 咪咕新增 `溯音咪咕`（`oiapi.net/api/MiGu_Music`）并置于**首位**：原第一梯队（星海主/备、GDStudio、Migu 直接源）当前全部失效，放在后面会白等 2～3 个窗口。该后端按歌名取链，脚本内用返回的 `copyrightId` 与 `songmid` 比对，不一致直接换源，防止串歌；免费额度最高 128k。
+- 实测（模拟洛雪 `globalThis.lx` 跑 musicUrl）：QQ 7/11 出链、咪咕 1/11 出链；咪咕由「整链全灭」恢复为 1.1 秒内出链，QQ 首窗（`玉宁熙`）与新增后备均返回 206 `audio/mpeg`。
+- 顺带修正 README 后端数量表：主线 2.4.2 实际为 TX 7 / MG 10，此前写的 26/12 是 2.3.0 的旧数据。
+- 2.4.2 已归档、内容零改写；回滚只需把导入地址换成 `历史版本/杰翔音乐源-2.4.2.js`。
 
 ### v2.4.2（2026-11-20）📌 正式发行
 
@@ -215,7 +231,7 @@ curl -O https://gitee.com/yygitee118/jiexiang-Music-Source/raw/main/%E6%9D%B0%E7
 
 ---
 
-杰翔音乐源 v2.4.2 —— 汇聚百川，只为每一首歌流畅抵达。
+杰翔音乐源 v2.4.3 —— 汇聚百川，只为每一首歌流畅抵达。
 如果你喜欢这个项目，别忘了点 ⭐ **Star** 支持我们，并欢迎进群一起交流！🎵
 
 *免责声明：本项目仅用于学习与技术研究，请遵守相关平台服务条款与当地法律法规，勿用于商业或侵权用途。*

@@ -1,11 +1,11 @@
 /*!
  * @name 杰翔聚合音源
  * @description 全平台支持flac，wy，qq，kg支持母带；kw 仅保留官方后端，且最高 320k mp3（官方无损档文件坏帧）；kg 无损档同样锁 320k mp3
- * @version 2.4.2
+ * @version 2.4.3
  * @author https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi
  * @homepage https://github.com/baiji6/molanyinyueyuan
  * @license MIT
- * @update 2026-11-20
+ * @update 2026-11-22
  * @changelog
     1.修复wy音源
     2.新增QQ越权
@@ -21,6 +21,8 @@
       但整文件坏帧不可播（与 kw 一致）；同一 hash 走 320k 返回 10,792,943 字节 audio/mpeg
       且 ffmpeg 全轨解码零错误。kg 音质声明收敛为 128k/320k，
       flac/flac24bit/hires/atmos/atmos_plus/master 统一降级到 320k mp3
+    7.【2.4.3】按实测补充可用后端：QQ 侧新增 晴亮/回响/vkeys备用/长青直连（插在 vkeys 前，避免试听片段抢跑）；
+      咪咕侧新增 溯音咪咕（按歌名取链 + copyrightId 校验，置于首位）。仅新增后端，未改调度层。
  */
 
 
@@ -625,6 +627,63 @@ const TX_BACKENDS = [
       throw new Error('tang: 无数据')
     },
   },
+  // ========== v2.4.3 补充（2026-11-22 实测出链，均排在 vkeys 之前，避免试听片段抢跑）==========
+  {
+    name: '晴亮(QQ)',
+    fetch: async (songmid, quality) => {
+      if (quality !== '128k' && quality !== '320k') throw new Error('晴亮仅支持128k/320k')
+      const res = await httpFetch('https://music.lzmhhh.com/api/music/url', {
+        method: 'POST', timeout: 6000,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0', Referer: 'https://music.lzmhhh.com/' },
+        body: 'id=' + encodeURIComponent(songmid) + '&type=qq',
+      })
+      const d = res.body
+      if (d && Number(d.code) === 1 && typeof d.data === 'string' && /^https?:\/\//i.test(d.data)) return d.data
+      if (d && d.data && typeof d.data.url === 'string') return d.data.url
+      throw new Error('晴亮: ' + ((d && d.msg) || '无数据'))
+    },
+  },
+
+  {
+    name: '回响(QQ)',
+    fetch: async (songmid) => {
+      const res = await httpFetch('https://api.xunhuisi.store/API/QQMusic/Song.php?mid=' + encodeURIComponent(songmid) + '&type=json', {
+        method: 'GET', timeout: 6000,
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+      })
+      const d = res.body
+      if (d && Number(d.code) === 200 && typeof d.music_url === 'string' && /^https?:\/\//i.test(d.music_url)) return d.music_url
+      throw new Error('回响: ' + ((d && d.msg) || '无数据'))
+    },
+  },
+
+  {
+    name: 'vkeys备用',
+    fetch: async (songmid) => {
+      const res = await httpFetch('https://api.vkeys.cn/music/tencent/song/link?mid=' + encodeURIComponent(songmid), {
+        method: 'GET', timeout: 6000,
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+      })
+      const d = res.body
+      if (d && Number(d.code) === 0 && d.data && typeof d.data.url === 'string' && /^https?:\/\//i.test(d.data.url)) return d.data.url
+      throw new Error('vkeys备用: ' + ((d && d.message) || '无数据'))
+    },
+  },
+
+  {
+    name: '长青直连(QQ)',
+    fetch: async (songmid) => {
+      const link = 'http://175.27.166.236/kgqq1/qq.php?type=mp3&id=' + encodeURIComponent(songmid)
+      // 该后端是流式代理，本身不返回 JSON 直链；先按 1KB Range 探一次，确认真在吐音频再交给洛雪，避免死链拖到超时
+      const probe = await httpFetch(link, {
+        method: 'GET', timeout: 8000,
+        headers: { 'User-Agent': 'Mozilla/5.0', Range: 'bytes=0-1023' },
+      })
+      const okCode = probe.statusCode === 200 || probe.statusCode === 206
+      if (!okCode) throw new Error('长青直连: HTTP ' + probe.statusCode)
+      return link
+    },
+  },
   {
     name: 'vkeys',
     fetch: async (songmid, quality) => {
@@ -774,6 +833,25 @@ const WY_BACKENDS = [
     },
   },
 
+  // ========== v2.4.3 补充（2026-11-22 实测）：溯音咪咕，按歌名搜索取 copyrightId 对应直链 ==========
+  {
+    name: '溯音咪咕',
+    fetch: async (songmid, quality, musicInfo) => {
+      const keyword = (musicInfo && (musicInfo.name || musicInfo.songName)) || ''
+      if (!keyword) throw new Error('溯音咪咕: 缺少歌名')
+      const br = quality === '128k' ? '128' : '320'
+      const res = await httpFetch('https://oiapi.net/api/MiGu_Music?msg=' + encodeURIComponent(keyword) + '&br=' + br + '&n=1', {
+        method: 'GET', timeout: 8000,
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+      })
+      const d = res.body
+      const data = d && d.data
+      if (!data || typeof data.url !== 'string' || !/^https?:\/\//i.test(data.url)) throw new Error('溯音咪咕: 无数据')
+      // 曲目校验：接口按歌名搜索，必须确认搜到的 copyrightId 与洛雪传入的一致，防止串歌
+      if (data.copyrightId && String(data.copyrightId) !== String(songmid)) throw new Error('溯音咪咕: 曲目不匹配(' + data.copyrightId + ')')
+      return data.url
+    },
+  },
   {
     name: '星海主后端',
     fetch: async (songmid, quality) => {
@@ -1022,6 +1100,25 @@ const KG_BACKENDS = [
     },
   },
 
+  // ========== v2.4.3 补充（2026-11-22 实测）：溯音咪咕，按歌名搜索取 copyrightId 对应直链 ==========
+  {
+    name: '溯音咪咕',
+    fetch: async (songmid, quality, musicInfo) => {
+      const keyword = (musicInfo && (musicInfo.name || musicInfo.songName)) || ''
+      if (!keyword) throw new Error('溯音咪咕: 缺少歌名')
+      const br = quality === '128k' ? '128' : '320'
+      const res = await httpFetch('https://oiapi.net/api/MiGu_Music?msg=' + encodeURIComponent(keyword) + '&br=' + br + '&n=1', {
+        method: 'GET', timeout: 8000,
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+      })
+      const d = res.body
+      const data = d && d.data
+      if (!data || typeof data.url !== 'string' || !/^https?:\/\//i.test(data.url)) throw new Error('溯音咪咕: 无数据')
+      // 曲目校验：接口按歌名搜索，必须确认搜到的 copyrightId 与洛雪传入的一致，防止串歌
+      if (data.copyrightId && String(data.copyrightId) !== String(songmid)) throw new Error('溯音咪咕: 曲目不匹配(' + data.copyrightId + ')')
+      return data.url
+    },
+  },
   {
     name: '星海主后端',
     fetch: async (songmid, quality, musicInfo) => {
@@ -1207,6 +1304,25 @@ const KG_BACKENDS = [
 // ==================== 咪咕音乐(mg) 后端接口列表（按优先级排列） ====================
 
 const MG_BACKENDS = [
+  // ========== v2.4.3 补充（2026-11-22 实测）：溯音咪咕，按歌名搜索取 copyrightId 对应直链 ==========
+  {
+    name: '溯音咪咕',
+    fetch: async (songmid, quality, musicInfo) => {
+      const keyword = (musicInfo && (musicInfo.name || musicInfo.songName)) || ''
+      if (!keyword) throw new Error('溯音咪咕: 缺少歌名')
+      const br = quality === '128k' ? '128' : '320'
+      const res = await httpFetch('https://oiapi.net/api/MiGu_Music?msg=' + encodeURIComponent(keyword) + '&br=' + br + '&n=1', {
+        method: 'GET', timeout: 8000,
+        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+      })
+      const d = res.body
+      const data = d && d.data
+      if (!data || typeof data.url !== 'string' || !/^https?:\/\//i.test(data.url)) throw new Error('溯音咪咕: 无数据')
+      // 曲目校验：接口按歌名搜索，必须确认搜到的 copyrightId 与洛雪传入的一致，防止串歌
+      if (data.copyrightId && String(data.copyrightId) !== String(songmid)) throw new Error('溯音咪咕: 曲目不匹配(' + data.copyrightId + ')')
+      return data.url
+    },
+  },
   {
     name: '星海主后端',
     fetch: async (songmid, quality) => {
