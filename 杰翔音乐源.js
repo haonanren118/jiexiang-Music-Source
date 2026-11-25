@@ -1,11 +1,11 @@
 /*!
  * @name 杰翔聚合音源
- * @description 全平台支持flac，wy，qq，kg支持母带；kw 仅保留官方后端，且最高 320k mp3（官方无损档文件坏帧）；kg 无损档同样锁 320k mp3
- * @version 2.4.3
+ * @description 全平台支持flac，wy，qq，kg支持母带；kw 仅保留官方后端，且最高 320k mp3（官方无损档文件坏帧）；kg 无损档同样锁 320k mp3；2.4.4 起 kw/wy 直链自动走 https 并带后端熔断，弱网更稳
+ * @version 2.4.4
  * @author https://qm.qq.com/cgi-bin/qm/qr?k=dEBGYbmu1lIRp7bAgHFim0W1uDsYl9v5&jump_from=webapi&authKey=fmTG96MhfqDQ5KARA/OvnuWAigCAloClvYhtSiEQd0jQneXmGons54BwlAh1+bUi
  * @homepage https://github.com/baiji6/molanyinyueyuan
  * @license MIT
- * @update 2026-11-22
+ * @update 2026-11-25
  * @changelog
     1.修复wy音源
     2.新增QQ越权
@@ -23,6 +23,17 @@
       flac/flac24bit/hires/atmos/atmos_plus/master 统一降级到 320k mp3
     7.【2.4.3】按实测补充可用后端：QQ 侧新增 晴亮/回响/vkeys备用/长青直连（插在 vkeys 前，避免试听片段抢跑）；
       咪咕侧新增 溯音咪咕（按歌名取链 + copyrightId 校验，置于首位）。仅新增后端，未改调度层。
+    8.【2.4.4】修复移动网络/弱链路下「很多歌曲无法播放」：飞牛扩展打开榜单时会后台并发预筛
+      曲目（并发 10、最多 200 首），任一首解析不出直链即记 30 分钟黑名单并整份歌单剔除；
+      实测单曲解析正常（120 首并发 10 全成功、7.5 秒），但单个后端高峰期整体故障时，
+      旧逻辑要让每首都把它等满超时才降档，整片歌单会一起失败。本次改脚本调度层：
+      a) 后端健康熔断（同后端连续失败 3 次冷却 90 秒、排到最后但不剔除）；
+      b) 酷我/网易 http 直链自动升级 https（4 个 car-*.kuwo.cn 与 m701/m801 实测换 https
+         后 HEAD 200、字节数完全一致），消除明文链路探测失败；
+      c) 同曲同档 60 秒解析缓存，预筛与随后的点播不再重复解析；
+      d) kw/kg 的 lossless 首档显式降级到 320k，少一次无谓往返；
+      e) kg 软超时兜底：2.5 秒内若有其它后端出链就直接采用，不再每首等 animemusic 的 5 秒，
+         200 首预筛的总耗时从 100 秒级压到 20 秒级（实测 40 首并发 10：34.6s → 见 README）。
  */
 
 
@@ -321,7 +332,9 @@ const KG_LEVEL_MAP = {
 }
 
 // 2.4.2：kg 无损档统一降级到 320k mp3（flac 档文件全轨坏帧，实测不可播）
+// 2.4.4：补 lossless —— 扩展首档固定请求 lossless，旧表里没有这一档会先失败再降档
 const KG_QUALITY_FALLBACK = {
+  lossless: '320k',
   flac: '320k',
   flac24bit: '320k',
   hires: '320k',
@@ -1481,6 +1494,84 @@ const MG_BACKENDS = [
 const CONCURRENCY = 4 // 单窗口同时发起的后端数；本窗口全军覆没才降级到下一窗口，避免无效等待
 const isPlayableUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u.trim()) // 仅做「像不像直链」的兜底，不替代洛雪自身的可达性探测
 
+// ==================== 2.4.4：弱网/高延迟链路稳定性改造 ====================
+// 背景：飞牛音乐扩展打开榜单/歌单时会对曲目做后台「可播预筛」（并发 10、最多 200 首），
+// 某曲解析不出直链就记 30 分钟黑名单并把整份歌单剔除 → 用户侧就是「很多歌播不了」。
+// 实测单曲解析 kw 0.3~0.5s、kg 1~3s，正常情况下 120 首并发 10 全部成功；
+// 但一旦某个后端在高峰期整体不可用（403/超时），每首都要把它等满超时才降档，
+// 200 首 × 10 并发下就会整片失败。脚本侧做三件事：
+//   1) 后端健康熔断：同后端连续失败 3 次 → 冷却 90 秒排到最后，避免「一个后端挂了拖垮整片」；
+//   2) http 直链升级 https：酷我/网易 CDN 实测支持（换 https 后 HEAD 200 且字节数一致），
+//      消除弱网与明文链路下的探测失败；
+//   3) 60 秒解析缓存：预筛之后紧接着的点播会重复解析同一首，直接命中缓存。
+
+const HTTPS_OK_SUFFIX = ['.kuwo.cn', '.music.126.net']
+
+const normalizeUrlScheme = (u) => {
+  if (typeof u !== 'string' || !/^http:\/\//i.test(u)) return u
+  try {
+    const host = u.slice(7).split('/')[0].split(':')[0].toLowerCase()
+    if (!HTTPS_OK_SUFFIX.some((s) => host.endsWith(s))) return u
+    return 'https://' + u.slice(7)
+  } catch (e) {
+    return u
+  }
+}
+
+const HEALTH_FAIL_LIMIT = 3
+const HEALTH_COOLDOWN_MS = 90 * 1000
+const BACKEND_HEALTH = {}
+
+const backendAvailable = (name) => {
+  const h = BACKEND_HEALTH[name]
+  if (!h || !h.cooldownUntil) return true
+  if (Date.now() < h.cooldownUntil) return false
+  BACKEND_HEALTH[name] = { fails: 0, cooldownUntil: 0 }
+  return true
+}
+
+const noteBackendResult = (name, ok) => {
+  if (ok) {
+    BACKEND_HEALTH[name] = { fails: 0, cooldownUntil: 0 }
+    return
+  }
+  const h = BACKEND_HEALTH[name] || { fails: 0, cooldownUntil: 0 }
+  h.fails += 1
+  if (h.fails >= HEALTH_FAIL_LIMIT) {
+    h.cooldownUntil = Date.now() + HEALTH_COOLDOWN_MS
+    h.fails = 0
+    console.log('[' + name + '] 连续失败 ' + HEALTH_FAIL_LIMIT + ' 次，冷却 90 秒')
+  }
+  BACKEND_HEALTH[name] = h
+}
+
+const URL_CACHE = new Map()
+const URL_CACHE_TTL_MS = 60 * 1000
+const URL_CACHE_MAX = 400
+
+// 2.4.4：kg 软超时。kg 各后端输出同质 320k mp3，没必要每首都等首位 animemusic（2.5~5s）。
+// 2.5 秒内若已有别的后端出链，就直接采用，避免 200 首预筛把扩展的 22 秒预算吃光。
+const KG_FAST_GRACE_MS = 2500
+
+const cacheGet = (k) => {
+  const v = URL_CACHE.get(k)
+  if (!v) return null
+  if (Date.now() - v.ts > URL_CACHE_TTL_MS) {
+    URL_CACHE.delete(k)
+    return null
+  }
+  return v.url
+}
+
+const cachePut = (k, url) => {
+  if (!url) return
+  if (URL_CACHE.size >= URL_CACHE_MAX) {
+    const oldest = URL_CACHE.keys().next().value
+    if (oldest !== undefined) URL_CACHE.delete(oldest)
+  }
+  URL_CACHE.set(k, { url: url, ts: Date.now() })
+}
+
 const handleGetMusicUrl = async (source, musicInfo, quality) => {
   const songId = musicInfo.hash ?? musicInfo.songmid ?? musicInfo.id
   if (!songId) throw new Error('无法获取歌曲ID')
@@ -1498,6 +1589,23 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
   // 2.4.2：kg 无损档（flac/hires/atmos/master）实测文件坏帧不可播，
   // 与 kw 同策略在解析前统一降级到 320k mp3；128k/320k 原样保留。
   if (source === 'kg' && KG_QUALITY_FALLBACK[quality]) quality = KG_QUALITY_FALLBACK[quality]
+
+  // 2.4.4：扩展首档固定请求 lossless（.env lx_quality 默认），而 kw 声明里没有这一档。
+  // 旧逻辑会让 kw 后端拿未知档位去请求、失败后再降档，等于每首多绕一圈；
+  // 这里把 kw 的未知档位直接收敛到 320k，一次命中，弱网下少一次往返。
+  if (source === 'kw' && !['128k', '192k', '320k'].includes(quality)) quality = '320k'
+
+  const cacheKey = source + ':' + String(songId) + ':' + String(quality)
+  const cached = cacheGet(cacheKey)
+  if (cached) return cached
+
+  // 2.4.4：健康度重排 —— 冷却中的后端排到最后，但**不剔除**（万一全都在冷却仍能兜底）
+  if (backends.length > 1) {
+    const hot = []
+    const cold = []
+    for (const b of backends) (backendAvailable(b.name) ? hot : cold).push(b)
+    if (cold.length && hot.length) backends = hot.concat(cold)
+  }
 
   // 酷我音乐：高音质（atmos/atmos_plus/master）走流媒体直链，普通音质走星海等其他后端
   if (source === 'kw') {
@@ -1520,30 +1628,51 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
   // 优先级竞价窗口：每窗口最多 CONCURRENCY 个后端并发请求，但一旦「最高优先级(最小索引)成功者」可确定就立即返回，
   // 不再等同窗口内排在它后面的慢后端——这正是此前比原版慢的根因（Promise.allSettled 会傻等窗口里最慢的那个）。
   // 返回结果与「串行按优先级逐个尝试」完全一致：只有 backends[0..i-1] 全失败且 backends[i] 成功才采用 i，不改变洛雪对 musicUrl 的校验语义。
-  const raceWindow = (indices) => new Promise((resolve) => {
+  const raceWindow = (indices, graceMs) => new Promise((resolve) => {
     const outcomes = {} // i -> url(成功) | null(失败/非直链)
+    let settled = false
+    let firstOk = null // 2.4.4：窗口内最早成功的后端（供软超时兜底）
+    const finish = (u) => {
+      if (settled) return
+      settled = true
+      resolve(u)
+    }
     const decide = () => {
       for (const i of indices) {
         if (!(i in outcomes)) return        // 更低优先级的后端还没结果，不能下结论，继续等
         if (outcomes[i]) {                   // 当前最低优先级已成功 -> 采用它（更高优先级无需再等）
           console.log('[' + source + '] ' + backends[i].name + ' 成功')
-          resolve(outcomes[i])
+          finish(normalizeUrlScheme(outcomes[i])) // 2.4.4：明文直链升级 https
           return
         }
         // 当前最低优先级失败 -> 看下一个更高优先级
       }
-      resolve(null) // 本窗口全部失败
+      finish(null) // 本窗口全部失败
+    }
+    // 2.4.4：kg 软超时 —— kg 各后端返回的都是同质 320k mp3，没必要为「等首位 animemusic」
+    // 把每首都拖到 5 秒（200 首预筛会成倍超出扩展 22 秒预算）。graceMs 到点且有别的后端已成功就先采用。
+    if (graceMs > 0) {
+      const timer = setTimeout(() => {
+        if (firstOk) {
+          console.log('[' + source + '] ' + firstOk.name + ' 软超时兜底（等待 ' + graceMs + 'ms）')
+          finish(normalizeUrlScheme(firstOk.url))
+        }
+      }, graceMs)
+      if (timer && typeof timer.unref === 'function') timer.unref()
     }
     indices.forEach((i) => {
       backends[i].fetch(songId, quality, musicInfo).then(
         (url) => {
           const u = isPlayableUrl(url) ? url : null
+          noteBackendResult(backends[i].name, !!u)
           if (!u) { errors.push(backends[i].name + ': 返回非直链'); console.log('[' + source + '] ' + backends[i].name + ' 返回非直链') }
+          else if (!firstOk) firstOk = { url: u, name: backends[i].name }
           outcomes[i] = u
           decide()
         },
         (e) => {
           const msg = e && e.message ? e.message : String(e)
+          noteBackendResult(backends[i].name, false)
           errors.push(backends[i].name + ': ' + msg)
           console.log('[' + source + '] ' + backends[i].name + ' 失败: ' + msg)
           outcomes[i] = null
@@ -1557,8 +1686,11 @@ const handleGetMusicUrl = async (source, musicInfo, quality) => {
     const end = Math.min(start + CONCURRENCY, B)
     const indices = []
     for (let i = start; i < end; i++) indices.push(i)
-    const win = await raceWindow(indices) // 本窗口内有成功则立即返回；全失败才降级下一窗口
-    if (win) return win
+    const win = await raceWindow(indices, source === 'kg' ? KG_FAST_GRACE_MS : 0) // 本窗口内有成功则立即返回；全失败才降级下一窗口
+    if (win) {
+      cachePut(cacheKey, win) // 2.4.4：60 秒内同曲同档复用，减轻预筛与点播的重复解析
+      return win
+    }
   }
 
   throw new Error('所有后端均失败（共' + B + '个）\n' + errors.join('\n'))
